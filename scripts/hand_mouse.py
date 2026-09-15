@@ -419,8 +419,9 @@ class HandMouseApp:
                 self.arm_suppressed = False
             want_freeze = (state.arming and not self.arm_suppressed
                            and self.last_screen_pos is not None)
-            if want_freeze and self.frozen:
+            if want_freeze and self.frozen and state.lock_tip is None:
                 # 固定中に手が大きく動いた／時間切れなら、クリックではないとみなして解除
+                # （中指ピンチによる明示的な固定では解除しない。離せば解除される）
                 raw = self.map_to_screen(*state.cursor)
                 moved = math.hypot(raw[0] - self.freeze_raw[0], raw[1] - self.freeze_raw[1])
                 if moved > self.cfg.arm_cancel_px or now - self.freeze_since > self.cfg.arm_timeout_sec:

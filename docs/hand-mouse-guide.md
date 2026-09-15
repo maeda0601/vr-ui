@@ -98,6 +98,7 @@ Webカメラに写した手の形と位置で、Windowsのマウスを操作す�
 | `pinch_on` / `pinch_off` | 0.40 / 0.62 | クリック判定の距離 |
 | `pinch_confirm_frames` | 2 | 連続フレーム数だけ閉じていたらクリック確定 |
 | `pinch_require_approach` | true | 親指が一度離れてから近づいたときだけ左クリック |
+| `freeze_gesture` | `approach` | `middle` にすると親指＋中指をつまんでいる間だけ固定し、左クリックは固定中の親指＋人差し指のみ |
 | `active_margin_x` | 0.18 | 操作エリアの左右余白 |
 | `active_margin_top` / `active_margin_bottom` | 0.10 / 0.32 | 操作エリアの上下余白 |
 | `overlay_hand_size` | 70 | 描画する手の大きさ[px] |

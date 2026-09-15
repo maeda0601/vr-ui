@@ -403,6 +403,9 @@ class HandOverlay:
             for i, p in enumerate(lp):
                 is_tip = i in _TIPS
                 cv2.circle(img, p, 7 if is_tip else 4, tip if is_tip else joint, -1, cv2.LINE_AA)
+            if enabled and state.lock_tip is not None:
+                # 中指ピンチによる位置固定中は黄色で結ぶ
+                cv2.line(img, lp[THUMB_TIP], lp[state.lock_tip], _bgra(*RGB_ACCENT), 6, cv2.LINE_AA)
             if enabled and state.mode == MODE_LEFT:
                 cv2.line(img, lp[THUMB_TIP], lp[INDEX_TIP], _bgra(*RGB_LEFT), 7, cv2.LINE_AA)
             elif enabled and state.mode == MODE_RIGHT:
@@ -418,6 +421,8 @@ class HandOverlay:
 
         # 手元のモード名（VRのツールチップ風）
         label = MODE_LABELS.get(state.mode, "") if hands_px else ""
+        if hands_px and state.mode == MODE_POINT and state.arming:
+            label = "位置固定中"
         if label:
             color = {MODE_LEFT: RGB_LEFT, MODE_RIGHT: RGB_RIGHT}.get(state.mode, RGB_ACCENT)
             if not enabled:

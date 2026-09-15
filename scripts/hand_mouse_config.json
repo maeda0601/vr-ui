@@ -24,6 +24,7 @@
   "pinch_off": 0.62,
   "pinch_confirm_frames": 2,
   "pinch_require_approach": true,
+  "freeze_gesture": "middle",
   "pinch_arm": 0.7,
   "arm_cancel_px": 30.0,
   "arm_timeout_sec": 1.0,
