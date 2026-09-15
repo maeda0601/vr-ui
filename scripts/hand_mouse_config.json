@@ -34,6 +34,8 @@
   "lock_finger_reach": 0.8,
   "lock_index_ratio": 0.9,
   "lock_drag_sec": 2.0,
+  "lock_grace_frames": 30,
+  "right_finger_reach": 0.85,
   "pinch_arm": 0.7,
   "arm_cancel_px": 30.0,
   "arm_timeout_sec": 1.0,

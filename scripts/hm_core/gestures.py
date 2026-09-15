@@ -205,6 +205,7 @@ class GestureRecognizer:
         self._left_pending = 0    # ピンチ条件を満たした連続フレーム数（確定待ち）
         self._right_pending = 0
         self._lock_on = False     # 中指ピンチによる位置固定（freeze_gesture=middle）
+        self._lock_grace = 0      # 固定を離した後の余韻（残りフレーム数）
 
     def reset(self):
         self._left_on = False
@@ -214,6 +215,11 @@ class GestureRecognizer:
         self._left_pending = 0
         self._right_pending = 0
         self._lock_on = False
+        self._lock_grace = 0
+
+    def _lock_active(self):
+        """固定中、または固定を離した直後の余韻の中か。"""
+        return self._lock_on or self._lock_grace > 0
 
     def _middle_lock_enabled(self):
         """中指ピンチ固定が有効か（右クリックの指と衝突する設定なら無効）。"""
@@ -301,13 +307,17 @@ class GestureRecognizer:
         # 親指の接近（クリック準備）は毎フレーム追跡する。左クリックの前提条件にも使う
         self._update_arming(d_index)
 
+        middle_lock = self._middle_lock_enabled()
         right_cond = (self._pinch_state(d_right, self._right_on)
                       and d_right < d_index * 0.8
-                      and primary.finger_reaching(right_tip, right_pip))
+                      and primary._extended(right_tip, right_pip,
+                                            ratio=self.cfg.right_finger_reach))
+        # 中指ピンチ固定のときは、右クリックも「固定してから」（固定中または余韻の中）だけ
+        if middle_lock and not self._right_on and not self._lock_active():
+            right_cond = False
         right_on = self._confirm(right_cond, self._right_on, "_right_pending")
 
         # 中指ピンチ固定: 親指＋中指をつまんでいる間だけ「固定」とみなす
-        middle_lock = self._middle_lock_enabled()
         if middle_lock:
             d_middle = primary.pinch_to(MIDDLE_TIP)
             thresh = self.cfg.lock_pinch_off if self._lock_on else self.cfg.lock_pinch_on
@@ -319,10 +329,16 @@ class GestureRecognizer:
             if not self._lock_on and d_middle >= d_index * self.cfg.lock_index_ratio:
                 lock = False
             self._lock_on = lock
-            self._arm_on = self._lock_on
+            # 離した後も余韻の間は固定位置を保つ（その間の右／左クリックを受け付ける）
+            if self._lock_on:
+                self._lock_grace = self.cfg.lock_grace_frames
+            elif self._lock_grace > 0:
+                self._lock_grace -= 1
+            self._arm_on = self._lock_active()
             state.lock_tip = MIDDLE_TIP if self._lock_on else None
         else:
             self._lock_on = False
+            self._lock_grace = 0
 
         # 人差し指を握り込んでいるとき（グー）は左ピンチとみなさない。
         # 未成立のうちは「親指が離れた状態から近づいてきた」（middle固定では固定中）ことも要求する
@@ -332,7 +348,7 @@ class GestureRecognizer:
             if middle_lock:
                 # 固定中に人差し指も親指に付いたときだけ。親指が中指に付いただけの姿勢では
                 # 人差し指との距離が中指より明確に遠いので、その比で区別する
-                if not self._lock_on or d_index > d_middle * 1.3:
+                if not self._lock_active() or d_index > d_middle * 1.3:
                     left_cond = False
             elif self.cfg.pinch_require_approach and not self._arm_on:
                 left_cond = False
