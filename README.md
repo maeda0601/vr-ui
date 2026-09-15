@@ -40,7 +40,8 @@ uv を使わない場合は `pip install -r requirements.txt` でも動きます
 uv run scripts/hand_mouse.py
 ```
 
-`run_hand_mouse.bat` をダブルクリックしても起動できます（内部で `uv run` を呼びます）。
+**`run_hand_mouse.bat` をダブルクリック**でも起動できます。uv の有無を確認し、初回は `.venv` の作成と
+モデルの取得も自動で行うので、通常はこれだけで使えます（引数も渡せます: `run_hand_mouse.bat --display preview`）。
 
 **安全のため、起動直後はマウス操作が無効**になっています。まず**手を開いてカメラに見せ**、
 灰色の骨格が出たら**グーを2秒保持**（または `Ctrl+Alt+H`）で有効化してください。
