@@ -38,13 +38,13 @@ class Config:
     reference_palm_size: float = 0.15
 
     # --- カーソル平滑化（One Euro Filter）---
-    filter_min_cutoff: float = 0.6
-    filter_beta: float = 0.005
+    filter_min_cutoff: float = 0.35
+    filter_beta: float = 0.0015
     filter_d_cutoff: float = 1.0
     # スタビライザー: この半径[px]以内の揺れは無視し、超えた分だけカーソルが引っ張られる
-    stabilizer_radius: float = 10.0
+    stabilizer_radius: float = 12.0
     # オーバーレイの骨格の平滑化係数（0〜1。小さいほど滑らか、1で平滑化なし）
-    skeleton_smoothing: float = 0.35
+    skeleton_smoothing: float = 0.25
 
     # --- ピンチ判定（手の大きさで正規化した指先間距離。ヒステリシス付き）---
     pinch_on: float = 0.45
