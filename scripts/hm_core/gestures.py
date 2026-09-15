@@ -389,6 +389,9 @@ class GestureRecognizer:
         # 未成立のうちは「親指が離れた状態から近づいてきた」（middle固定では固定中）ことも要求する
         left_cond = (self._pinch_state(d_index, self._left_on) and not right_on
                      and not primary.index_curled)
+        if middle_lock and self._left_on and d_index >= self.cfg.lock_click_release:
+            # 固定中は人差し指を少し離しただけでクリック状態を終え、次のタップ（ダブルクリック）に備える
+            left_cond = False
         if not self._left_on:
             if middle_lock:
                 # 固定中に「人差し指が一度離れてから親指に付いた」ときだけクリック。

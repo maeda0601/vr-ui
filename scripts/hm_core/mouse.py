@@ -101,6 +101,14 @@ class MouseController:
         y = int(min(max(y, self.margin), self.screen_h - 1 - self.margin))
         user32.SetCursorPos(x, y)
 
+    @staticmethod
+    def double_click_time_sec():
+        """OSのダブルクリック判定時間[秒]（既定 0.5秒。Windowsのマウス設定で変更可）。"""
+        try:
+            return max(0.1, user32.GetDoubleClickTime() / 1000.0)
+        except Exception:
+            return 0.5
+
     def get_position(self):
         pt = wintypes.POINT()
         user32.GetCursorPos(ctypes.byref(pt))

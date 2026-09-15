@@ -104,6 +104,7 @@ class HandMouseApp:
         self._ignored_notice_shown = False
         self.config_path = None           # 設定の保存先（左右入れ替えを永続化するため）
         self._debug_printed = 0.0         # 判定値をコンソールに出した時刻
+        self.last_click_at = None         # 直前の左クリック時刻（ダブルクリック表示用）
         self.status_text = ""
         self.status_until = 0.0
 
@@ -504,6 +505,13 @@ class HandMouseApp:
                     self.apply_cursor(state.cursor, now, dt)
                 if entered and self.enabled:
                     self.mouse.click_left()
+                    # OSのダブルクリック時間内の2回目はWindows側でダブルクリックになる
+                    window = self.mouse.double_click_time_sec()
+                    if self.last_click_at is not None and now - self.last_click_at <= window:
+                        self.notify("ダブルクリック", 1.0)
+                        self.last_click_at = None
+                    else:
+                        self.last_click_at = now
 
         elif mode == G.MODE_RIGHT:
             if entered:
