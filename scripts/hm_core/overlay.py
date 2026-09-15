@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 
 from .gestures import (HAND_CONNECTIONS, INDEX_TIP, MODE_LABELS, MODE_LEFT,
-                       MODE_RIGHT, MODE_ZOOM, RING_TIP, THUMB_TIP)
+                       MODE_POINT, MODE_RIGHT, MODE_ZOOM, RING_TIP, THUMB_TIP)
 
 # 日本語フォントの候補（Windows標準）
 _FONT_CANDIDATES = (
@@ -87,7 +87,7 @@ def draw_active_area(frame, cfg):
     return (x0, y0, x1, y1)
 
 
-def draw_hand(frame, hand, highlight_mode=None, right_tip=RING_TIP):
+def draw_hand(frame, hand, highlight_mode=None, right_tip=RING_TIP, lock_tip=None):
     """手の骨格を描く。"""
     h, w = frame.shape[:2]
     pts = [(int(p[0] * w), int(p[1] * h)) for p in hand.points]
@@ -99,6 +99,9 @@ def draw_hand(frame, hand, highlight_mode=None, right_tip=RING_TIP):
         cv2.circle(frame, p, 5 if is_tip else 3,
                    COL_TIP if is_tip else COL_JOINT, -1, cv2.LINE_AA)
 
+    # 中指ピンチによる位置固定中は黄色で結ぶ
+    if lock_tip is not None:
+        cv2.line(frame, pts[THUMB_TIP], pts[lock_tip], COL_AREA, 3, cv2.LINE_AA)
     # ピンチしている指同士を結んで、判定状況を分かりやすくする
     if highlight_mode == MODE_LEFT:
         cv2.line(frame, pts[THUMB_TIP], pts[INDEX_TIP], COL_ON, 3, cv2.LINE_AA)
@@ -155,7 +158,7 @@ def render_hud(frame, renderer, cfg, state, enabled, fps, status_text="", ignore
     for hand in ignored_hands:
         draw_ghost_hand(frame, hand)
     for hand in state.hands:
-        draw_hand(frame, hand, state.mode, state.right_tip)
+        draw_hand(frame, hand, state.mode, state.right_tip, state.lock_tip)
     if state.mode == MODE_ZOOM and len(state.hands) >= 2:
         draw_zoom_link(frame, state.hands)
 
@@ -167,9 +170,14 @@ def render_hud(frame, renderer, cfg, state, enabled, fps, status_text="", ignore
     lamp_color = COL_ON if enabled else COL_OFF
     cv2.circle(frame, (22, 22), 9, lamp_color, -1, cv2.LINE_AA)
 
+    mode_text = MODE_LABELS.get(state.mode, state.mode)
+    if state.mode == MODE_POINT and state.lock_drag:
+        mode_text = "ドラッグ中（固定から）"
+    elif state.mode == MODE_POINT and state.arming:
+        mode_text = "位置固定中"
     items = [
         ("操作: 有効" if enabled else "操作: 無効", (40, 10), 20, lamp_color),
-        (MODE_LABELS.get(state.mode, state.mode), (40, 36), 18, COL_TEXT),
+        (mode_text, (40, 36), 18, COL_TEXT),
         (f"{fps:5.1f} fps", (w - 100, 12), 18, COL_TEXT),
         ("Space:有効切替  R:リセット  Esc:終了   /   Ctrl+Alt+H 切替  Ctrl+Alt+S 左右入替  Ctrl+Alt+Q 終了",
          (12, h - 48), 15, COL_TEXT),

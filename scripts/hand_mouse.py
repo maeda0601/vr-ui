@@ -445,7 +445,8 @@ class HandMouseApp:
 
         elif mode == G.MODE_POINT:
             self.decay_offset(dt)
-            if not state.arming:
+            if not state.arming or state.lock_tip is not None:
+                # 明示的な固定（中指ピンチ）は、余韻中の自動解除で立った抑止フラグを無視する
                 self.arm_suppressed = False
             want_freeze = (state.arming and not self.arm_suppressed
                            and self.last_screen_pos is not None)
