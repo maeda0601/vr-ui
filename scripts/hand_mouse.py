@@ -96,6 +96,8 @@ class HandMouseApp:
         self.noise_gain = 1.0         # 状況に応じた安定化の倍率（端・手の大きさで増える）
         self._single_allowed = True   # 手が1つのときの採用状態（左右判定のちらつき対策）
         self._allow_streak = 0
+        self._ignored_since_first = 0.0   # 無視している手が見え始めた時刻（案内表示用）
+        self._ignored_notice_shown = False
         self.status_text = ""
         self.status_until = 0.0
 
@@ -543,6 +545,22 @@ class HandMouseApp:
                 # 設定で使わない手（既定では左手）は操作にも描画にも使わない
                 active_hands = self.select_hands(hands)
                 ignored_only = bool(hands) and not active_hands
+                ignored_label = ""
+                if ignored_only:
+                    h = hands[0]
+                    side = {"left": "左手", "right": "右手"}.get(h.handedness.lower(), "不明")
+                    ignored_label = f"{side}と判定（信頼度 {h.handedness_score:.2f}）→ 無視中"
+                    if self._ignored_since_first == 0.0:
+                        self._ignored_since_first = now
+                    # 1.5秒以上無視し続けたら、コンソールにも対処法を一度だけ出す
+                    if (not self._ignored_notice_shown
+                            and now - self._ignored_since_first > 1.5):
+                        self._ignored_notice_shown = True
+                        print(f"検出した手を「{side}」と判定して無視しています（設定 use_hand={self.cfg.use_hand}）。"
+                              "これが実際の右手なら左右判定が逆です。"
+                              "--swap-hands を付けて起動するか、設定 swap_handedness を true にしてください。")
+                else:
+                    self._ignored_since_first = 0.0
 
                 state = self.recognizer.update(active_hands)
                 self.process(state, now, dt)
@@ -563,7 +581,8 @@ class HandMouseApp:
                         held = now - self.fist_since
                         hint = f"グー保持中 {held:.1f} / {self.cfg.fist_toggle_sec:.1f} 秒"
                     elif ignored_only:
-                        hint = f"{'右' if self.cfg.use_hand == 'right' else '左'}手だけを使います"
+                        hint = (f"{'右' if self.cfg.use_hand == 'right' else '左'}手だけを使います"
+                                f"（{ignored_label}）")
                     elif state.near_edge:
                         hint = "手がカメラの端に近いです"
                     elif self.enabled:
@@ -605,6 +624,10 @@ def parse_args():
                              "preview=カメラ映像ウィンドウ / none=非表示")
     parser.add_argument("--no-preview", action="store_true",
                         help="--display none と同じ（互換用）")
+    parser.add_argument("--hand", choices=("right", "left", "both"),
+                        help="操作に使う手（既定は設定ファイルの値。初期値は right）")
+    parser.add_argument("--swap-hands", action="store_true",
+                        help="左右の判定が逆になる環境で、判定を入れ替える")
     return parser.parse_args()
 
 
@@ -619,6 +642,10 @@ def main():
         cfg.display_mode = args.display
     if args.no_preview:
         cfg.display_mode = "none"
+    if args.hand:
+        cfg.use_hand = args.hand
+    if args.swap_hands:
+        cfg.swap_handedness = True
 
     enable_dpi_awareness()
 
