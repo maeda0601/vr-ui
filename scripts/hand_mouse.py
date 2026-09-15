@@ -102,6 +102,7 @@ class HandMouseApp:
         self._ignored_since_first = 0.0   # 無視している手が見え始めた時刻（案内表示用）
         self._ignored_notice_shown = False
         self.config_path = None           # 設定の保存先（左右入れ替えを永続化するため）
+        self._debug_printed = 0.0         # 判定値をコンソールに出した時刻
         self.status_text = ""
         self.status_until = 0.0
 
@@ -643,6 +644,18 @@ class HandMouseApp:
                 else:
                     hint = "グーを2秒保持 または Ctrl+Alt+H で開始"
 
+                # 判定値の表示（しきい値調整用）
+                if self.cfg.debug_hud and state.hands:
+                    h0 = state.hands[0]
+                    dbg = (f"人差し指 {h0.pinch_index:.2f} / 中指 {h0.pinch_to(G.MIDDLE_TIP):.2f}"
+                           f"（伸び {h0.reach_ratio(G.MIDDLE_TIP, G.MIDDLE_PIP):.2f}）"
+                           f" / 薬指 {h0.pinch_to(G.RING_TIP):.2f}"
+                           f"（伸び {h0.reach_ratio(G.RING_TIP, G.RING_PIP):.2f}）")
+                    hint = f"{hint}  {dbg}" if hint else dbg
+                    if now - self._debug_printed > 1.0:
+                        self._debug_printed = now
+                        print(f"[判定値] {dbg}  mode={state.mode} lock={state.lock_tip is not None}")
+
                 if use_preview:
                     view = render_hud(frame, self.renderer, self.cfg, state,
                                       self.enabled, self.fps, hint, ignored_hands)
@@ -688,6 +701,8 @@ def parse_args():
                         help="操作に使う手（既定は設定ファイルの値。初期値は right）")
     parser.add_argument("--swap-hands", action="store_true",
                         help="左右の判定が逆になる環境で、判定を入れ替える")
+    parser.add_argument("--debug", action="store_true",
+                        help="指の距離などの判定値を画面とコンソールに表示する（しきい値調整用）")
     return parser.parse_args()
 
 
@@ -706,6 +721,8 @@ def main():
         cfg.use_hand = args.hand
     if args.swap_hands:
         cfg.swap_handedness = True
+    if args.debug:
+        cfg.debug_hud = True
 
     enable_dpi_awareness()
 

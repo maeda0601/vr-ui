@@ -119,6 +119,11 @@ class Hand:
         """親指と指定した指先の距離（手の大きさで正規化）。"""
         return _dist(self.points[THUMB_TIP], self.points[tip]) / self.scale
 
+    def reach_ratio(self, tip, pip):
+        """指先の手首からの距離 ÷ 第二関節の手首からの距離（1以上なら伸びている）。"""
+        wrist = self.points[WRIST]
+        return _dist(wrist, self.points[tip]) / max(_dist(wrist, self.points[pip]), 1e-6)
+
     def finger_reaching(self, tip, pip):
         """その指が前に出ているか（握り込んでいないか）。
 

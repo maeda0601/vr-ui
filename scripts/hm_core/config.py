@@ -66,10 +66,10 @@ class Config:
     #   middle   : 親指＋中指をつまんでいる間だけ固定。左クリックは固定中の親指＋人差し指のみ
     freeze_gesture: str = "approach"
     # 中指ピンチ固定の判定（つまむと中指が曲がるので、クリックより緩い条件にする）
-    lock_pinch_on: float = 0.50      # 固定開始の距離（手の大きさで正規化）
-    lock_pinch_off: float = 0.70     # 固定解除の距離（ヒステリシス）
-    lock_finger_reach: float = 0.80  # 中指の曲がりの許容（指先が第二関節×この値より遠ければ可）
-    lock_index_ratio: float = 0.90   # 固定開始は「中指距離 < 人差し指距離×この値」のときだけ
+    lock_pinch_on: float = 0.55      # 固定開始の距離（手の大きさで正規化）
+    lock_pinch_off: float = 0.75     # 固定解除の距離（ヒステリシス）
+    lock_finger_reach: float = 0.60  # 中指の曲がりの許容（指先が第二関節×この値より遠ければ可）
+    lock_index_ratio: float = 1.00   # 固定開始は「中指距離 < 人差し指距離×この値」のときだけ
     # 固定をこの秒数続けると左ボタンを押した状態になり、そのまま動かすとドラッグ／範囲選択
     # （0 で無効）
     lock_drag_sec: float = 1.5
@@ -120,6 +120,9 @@ class Config:
 
     # --- 起動時からマウス操作を有効にするか（既定は安全のため無効）---
     enable_on_start: bool = False
+
+    # --- 判定値の表示（しきい値調整用。--debug でも有効化できる）---
+    debug_hud: bool = False
 
     # --- 表示方法 ---
     #   overlay : デスクトップ上に手の骨格だけを透過表示（既定）

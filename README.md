@@ -47,6 +47,7 @@ python scripts/hand_mouse.py
 | `--camera 1` | 使用するカメラ番号を指定 |
 | `--hand both` | 操作に使う手（`right` / `left` / `both`）。設定ファイルより優先 |
 | `--swap-hands` | 左右の判定が逆になる環境で判定を入れ替える |
+| `--debug` | 指の距離などの判定値を画面上部とコンソールに表示（しきい値調整用） |
 | `--enable` | 起動直後からマウス操作を有効にする |
 | `--config <path>` | 設定JSONのパスを指定 |
 
@@ -130,8 +131,8 @@ python scripts/hand_mouse.py
 | `freeze_gesture` | `approach` | カーソル固定のやり方。`middle` にすると**親指＋中指をつまんでいる間だけ固定**し、左クリックは固定中の親指＋人差し指のみ受け付ける（誤クリックが最も少ない） |
 | `lock_drag_sec` | 1.5 | （`middle` のとき）固定をこの秒数続けると左ボタンを押した状態になり、そのまま動かすとドラッグ／範囲選択。指を離すと終了。0で無効 |
 | `lock_grace_sec` | 1.5 | （`middle` のとき）固定を離した後もこの秒数は固定位置を保ち、その間の親指＋薬指＝右クリック／親指＋人差し指＝左クリックを受け付ける |
-| `lock_pinch_on` / `lock_pinch_off` | 0.50 / 0.70 | 固定の開始／解除の距離。反応しにくければ `lock_pinch_on` を 0.6 に |
-| `lock_finger_reach` / `lock_index_ratio` | 0.80 / 0.90 | 固定開始時の中指の曲がりの許容と、人差し指との距離比 |
+| `lock_pinch_on` / `lock_pinch_off` | 0.55 / 0.75 | 固定の開始／解除の距離。反応しにくければ `--debug` で実測値を見て `lock_pinch_on` を上げる |
+| `lock_finger_reach` / `lock_index_ratio` | 0.60 / 1.00 | 固定開始時の中指の曲がりの許容（伸び比がこれ以上）と、人差し指との距離比（中指距離 < 人差し指距離×この値） |
 | `right_click_finger` | `ring` | 右クリックで親指とつまむ指。`ring`（薬指）/ `middle`（中指）/ `pinky`（小指） |
 | `use_hand` | `right` | 操作に使う手。`right` / `left` / `both`。`both` 以外では両手ズームは使えない |
 | `swap_handedness` | false | 左右の判定が逆になる場合に true |
