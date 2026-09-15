@@ -26,7 +26,7 @@
   "arm_cancel_px": 30.0,
   "arm_timeout_sec": 1.0,
   "use_hand": "right",
-  "swap_handedness": false,
+  "swap_handedness": true,
   "handedness_min_score": 0.8,
   "handedness_switch_frames": 6,
   "right_click_finger": "ring",
