@@ -4,8 +4,11 @@ __pycache__/
 .venv/
 venv/
 
-# MediaPipe の検出モデル（約7.8MB）。python scripts/download_model.py で取得する
+# MediaPipe の検出モデル（約7.8MB）。uv run scripts/download_model.py で取得する
 models/*.task
+
+# コンソール無し起動時のログ
+logs/
 
 # エディタ・OS
 .vscode/

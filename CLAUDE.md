@@ -84,6 +84,12 @@ ZOOM（両手ともピンチ）→ LEFT（親指+人差し指）→ RIGHT（親�
 - `mediapipe` は `opencv-contrib-python` を依存で入れる。`opencv-python` / `opencv-python-headless` を同居させると `cv2` が最後に入った方に解決され、headless だと `imshow` が無い。pyproject では `opencv-contrib-python` だけを指定して二重インストールを避けている。uv の `.venv` はこれで一貫しているが、システムの Python（`python` 直叩き）には両方入っているので、プレビューが出なくなったら `uv run` で起動しているか確認する。
 - 実効フレームレートはカメラ側で決まることが多い（暗いと露光延長で半減）。検出自体は約18〜19ms/フレーム。
 
+## 起動ランチャー
+
+- `run_hand_mouse.bat`: uv を探し（PATH に無ければ `%USERPROFILE%\.local\bin\uv.exe`）、初回は `uv sync` とモデル取得をしてから `uv run scripts\hand_mouse.py`。cp932 で保存する（cmd が読むため）。
+- `run_hand_mouse_silent.vbs`: コンソール無しで `.venv\Scripts\pythonw.exe` を直接起動（`sh.Run ..., 0`）。セットアップ未完なら bat を表示付きで実行。pythonw では `sys.stdout` が None なので `setup_logging_if_no_console()` が `logs/hand_mouse.log` へ付け替える（`print` は stdout が None でも例外にならないが、痕跡を残すため）。
+- Git Bash から bat を検証するときは `MSYS_NO_PATHCONV=1 cmd.exe /c "<絶対パス>.bat --help < nul"`（`/c` がパスに変換されて対話 cmd が起動する罠がある）。
+
 ## 自動コミット
 
 `.claude/settings.json` の Stop フックが各ターン終了時に `.claude/hooks/auto-commit.sh` を実行し、作業ツリーに変更があれば `git add -A` → コミットする（メッセージは「自動コミット: 日時（Nファイル）」）。ユーザーの希望による運用なので、途中状態でもコミットされる前提でよい。意味のある単位でまとめたいときは、ターンの終わりに自分で説明的なメッセージでコミットすれば、フックは何もしない。

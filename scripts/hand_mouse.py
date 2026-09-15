@@ -850,7 +850,29 @@ def parse_args():
     return parser.parse_args()
 
 
+def setup_logging_if_no_console():
+    """pythonw.exe など標準出力の無い環境では、print の出力を logs/ 配下のファイルへ流す。
+
+    コンソール無しで起動したときにエラーの手掛かりが消えないようにするため。
+    """
+    if sys.stdout is not None and sys.stderr is not None:
+        return None
+    log_dir = ROOT / "logs"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "hand_mouse.log"
+        # 前回分は捨てて、直近の起動分だけ残す
+        f = open(log_path, "w", encoding="utf-8", buffering=1)
+    except OSError:
+        return None
+    sys.stdout = f
+    sys.stderr = f
+    print(f"コンソール無しで起動しました。ログ: {log_path}")
+    return f
+
+
 def main():
+    log_file = setup_logging_if_no_console()
     args = parse_args()
     cfg = Config.load(args.config)
     if args.camera is not None:
@@ -877,6 +899,14 @@ def main():
     except (RuntimeError, FileNotFoundError) as e:
         print(f"起動できませんでした: {e}")
         return 1
+    except Exception:
+        # コンソール無しのときも原因が残るようにトレースバックをログへ
+        import traceback
+        traceback.print_exc()
+        return 1
+    finally:
+        if log_file is not None:
+            log_file.close()
     return 0
 
 
