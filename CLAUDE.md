@@ -50,6 +50,7 @@ CameraStream(別スレッド, 最新フレームのみ保持)
 ### 使う手の選別（`HandMouseApp.hand_allowed`）
 
 `use_hand`（既定 `right`）に合わない手は recognizer に渡す前に落とす（描画もされない）。MediaPipe の handedness は鏡像入力前提で、本アプリは検出前に `cv2.flip` しているのでラベル＝実際の左右。環境で逆になるなら `swap_handedness`。ラベル無し・信頼度 `handedness_min_score` 未満の手は落とさない（グーは左右判定が不安定で、落とすと起動時の有効化ができなくなる）。手が1つのときは `select_hands()` が `handedness_switch_frames` 連続で同じ判定になるまで採用／無視を切り替えない。
+無視した手は `ignored_hands` として灰色で描く（プレビュー `draw_ghost_hand`、オーバーレイ `ghost_px`）。描かないと「検出していない」と区別がつかない。左右が逆の環境（ドライバが既に鏡像化しているカメラ等）向けに `Ctrl+Alt+S`（`toggle_swap_handedness`）で入れ替えて `config_path` に保存する。
 MediaPipe の手のひら検出は開いた手が前提で、閉じた手（グー）は追跡中でないと検出されにくい。無効中で手が無いときの案内は「手を開いてカメラに見せてください」にしている。
 
 ### モード判定の優先順位（`hm_core/gestures.py`）

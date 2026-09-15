@@ -339,17 +339,18 @@ class HandOverlay:
         self._pill_key = None
 
     # --- 描画 -----------------------------------------------------------
-    def render(self, hands_px, cursor_px, state, enabled, hint=""):
+    def render(self, hands_px, cursor_px, state, enabled, hint="", ghost_px=()):
         """1フレーム分を描いて表示する。
 
         hands_px : 手ごとの21点の画面座標リスト
         cursor_px: 平滑化後のカーソル座標（無ければNone）
         state    : GestureState
+        ghost_px : 設定で無視している手（灰色で薄く描くだけ）
         """
         if self.closed:
             return
-        if hands_px:
-            self._render_hands(hands_px, cursor_px, state, enabled)
+        if hands_px or ghost_px:
+            self._render_hands(hands_px, cursor_px, state, enabled, ghost_px)
         else:
             self.hand_win.hide()
         self._render_pill(state, enabled, hint)
@@ -359,8 +360,8 @@ class HandOverlay:
             self.hand_win.raise_topmost()
             self.pill_win.raise_topmost()
 
-    def _render_hands(self, hands_px, cursor_px, state, enabled):
-        pts = [p for hand in hands_px for p in hand]
+    def _render_hands(self, hands_px, cursor_px, state, enabled, ghost_px=()):
+        pts = [p for hand in hands_px for p in hand] + [p for hand in ghost_px for p in hand]
         if cursor_px is not None:
             pts = pts + [cursor_px]
         xs = [p[0] for p in pts]
@@ -386,6 +387,15 @@ class HandOverlay:
         joint = _bgra(*RGB_JOINT)
         tip = _bgra(*RGB_TIP)
 
+        # 無視している手は薄い灰色で（検出はされていることが分かるように）
+        ghost = _bgra(*RGB_BONE_OFF, 140)
+        for hand in ghost_px:
+            lp = [local(p) for p in hand]
+            for a, b in HAND_CONNECTIONS:
+                cv2.line(img, lp[a], lp[b], ghost, 3, cv2.LINE_AA)
+            for p in lp:
+                cv2.circle(img, p, 3, ghost, -1, cv2.LINE_AA)
+
         for hand in hands_px:
             lp = [local(p) for p in hand]
             for a, b in HAND_CONNECTIONS:
@@ -407,7 +417,7 @@ class HandOverlay:
             self._draw_ring(img, local(cursor_px), state, enabled)
 
         # 手元のモード名（VRのツールチップ風）
-        label = MODE_LABELS.get(state.mode, "")
+        label = MODE_LABELS.get(state.mode, "") if hands_px else ""
         if label:
             color = {MODE_LEFT: RGB_LEFT, MODE_RIGHT: RGB_RIGHT}.get(state.mode, RGB_ACCENT)
             if not enabled:

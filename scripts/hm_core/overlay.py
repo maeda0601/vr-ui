@@ -139,11 +139,23 @@ def _gauge(frame, x, y, w, value, on_threshold, label_color):
     cv2.line(frame, (tx, y - 3), (tx, y + 9), (240, 240, 240), 1)
 
 
-def render_hud(frame, renderer, cfg, state, enabled, fps, status_text=""):
+def draw_ghost_hand(frame, hand):
+    """設定で無視している手を灰色の骨格で描く（検出はしていると分かるように）。"""
+    h, w = frame.shape[:2]
+    pts = [(int(p[0] * w), int(p[1] * h)) for p in hand.points]
+    for a, b in HAND_CONNECTIONS:
+        cv2.line(frame, pts[a], pts[b], (110, 110, 110), 2, cv2.LINE_AA)
+    for p in pts:
+        cv2.circle(frame, p, 3, (160, 160, 160), -1, cv2.LINE_AA)
+
+
+def render_hud(frame, renderer, cfg, state, enabled, fps, status_text="", ignored_hands=()):
     """プレビュー画面にHUDを重ねて返す。"""
     h, w = frame.shape[:2]
 
     draw_active_area(frame, cfg)
+    for hand in ignored_hands:
+        draw_ghost_hand(frame, hand)
     for hand in state.hands:
         draw_hand(frame, hand, state.mode, state.right_tip)
     if state.mode == MODE_ZOOM and len(state.hands) >= 2:
@@ -161,7 +173,7 @@ def render_hud(frame, renderer, cfg, state, enabled, fps, status_text=""):
         ("操作: 有効" if enabled else "操作: 無効", (40, 10), 20, lamp_color),
         (MODE_LABELS.get(state.mode, state.mode), (40, 36), 18, COL_TEXT),
         (f"{fps:5.1f} fps", (w - 100, 12), 18, COL_TEXT),
-        ("Space:有効切替  R:リセット  Esc:終了   /   Ctrl+Alt+H 切替  Ctrl+Alt+Q 終了",
+        ("Space:有効切替  R:リセット  Esc:終了   /   Ctrl+Alt+H 切替  Ctrl+Alt+S 左右入替  Ctrl+Alt+Q 終了",
          (12, h - 48), 15, COL_TEXT),
     ]
     if status_text:

@@ -51,6 +51,7 @@ WINDOW_NAME = "Hand Mouse"
 VK_H = 0x48
 VK_Q = 0x51
 VK_R = 0x52
+VK_S = 0x53
 
 DISPLAY_MODES = ("overlay", "preview", "none")
 
@@ -98,6 +99,7 @@ class HandMouseApp:
         self._allow_streak = 0
         self._ignored_since_first = 0.0   # 無視している手が見え始めた時刻（案内表示用）
         self._ignored_notice_shown = False
+        self.config_path = None           # 設定の保存先（左右入れ替えを永続化するため）
         self.status_text = ""
         self.status_until = 0.0
 
@@ -144,6 +146,17 @@ class HandMouseApp:
         self.filter.reset()
         self.offset = [0.0, 0.0]
         self.notify("マウス操作を有効にしました" if value else "マウス操作を無効にしました")
+
+    def toggle_swap_handedness(self):
+        """左右判定を入れ替えて設定ファイルに保存する（Ctrl+Alt+S）。"""
+        self.cfg.swap_handedness = not self.cfg.swap_handedness
+        self._single_allowed = True
+        self._allow_streak = 0
+        self._ignored_notice_shown = False
+        if self.config_path:
+            self.cfg.save(self.config_path)
+        self.notify("左右判定を入れ替えました（swap_handedness="
+                    f"{'true' if self.cfg.swap_handedness else 'false'}、設定に保存）", 3.0)
 
     def reset_state(self):
         self.recognizer.reset()
@@ -204,17 +217,20 @@ class HandMouseApp:
                 self._allow_streak = 0
         return hands if self._single_allowed else []
 
-    def hands_to_screen(self, hands, state):
+    def hands_to_screen(self, hands, state, anchor_cursor=True):
         """オーバーレイ描画用に、各手の21点を画面座標へ変換する。
 
         既定では手を一定サイズ（overlay_hand_size）に正規化し、カーソル基準点が
         実際のカーソル位置に重なるように配置する。これでカメラとの距離に
         関係なく同じ大きさで描け、描かれた指先＝クリック位置になる。
+        anchor_cursor=False（無視している手の描画）では平滑化せず生の写像位置に置く。
         """
         cfg = self.cfg
         size = cfg.overlay_hand_size
         fw, fh = cfg.frame_width, cfg.frame_height
-        points_list = self.smooth_skeleton(hands)
+        if not hands:
+            return []
+        points_list = self.smooth_skeleton(hands) if anchor_cursor else [h.points for h in hands]
         result = []
         for i, hand in enumerate(hands):
             points = points_list[i]
@@ -224,7 +240,8 @@ class HandMouseApp:
             # 主操作の手はカーソル基準点を実カーソル位置に合わせる。それ以外は生の写像位置。
             # 基準点は平滑化後の骨格から取り直す（生の座標を使うと骨格とリングがずれる）
             smoothed = G.Hand.from_points(points, hand.handedness)
-            if i == 0 and state.cursor is not None and self.last_screen_pos is not None:
+            if (anchor_cursor and i == 0 and state.cursor is not None
+                    and self.last_screen_pos is not None):
                 anchor_norm = self.recognizer.cursor_point(smoothed, state.mode)
                 anchor_px = self.last_screen_pos
             else:
@@ -472,6 +489,8 @@ class HandMouseApp:
                 self.set_enabled(not self.enabled)
             elif name == "reset":
                 self.reset_state()
+            elif name == "swap":
+                self.toggle_swap_handedness()
 
     # --- メインループ -------------------------------------------------
     def run(self):
@@ -480,6 +499,7 @@ class HandMouseApp:
         self.hotkeys.register("toggle", VK_H)
         self.hotkeys.register("quit", VK_Q)
         self.hotkeys.register("reset", VK_R)
+        self.hotkeys.register("swap", VK_S)
 
         display = self.cfg.display_mode if self.cfg.display_mode in DISPLAY_MODES else "overlay"
         use_preview = display == "preview"
@@ -495,7 +515,8 @@ class HandMouseApp:
                                   self.cfg.overlay_alpha)
 
         print(f"画面解像度: {self.mouse.screen_w}x{self.mouse.screen_h} / 表示: {display}")
-        print("Ctrl+Alt+H:有効切替 / Ctrl+Alt+R:リセット / Ctrl+Alt+Q:終了（どこからでも有効）")
+        print("Ctrl+Alt+H:有効切替 / Ctrl+Alt+R:リセット / Ctrl+Alt+S:左右判定の入れ替え / "
+              "Ctrl+Alt+Q:終了（どこからでも有効）")
         if use_preview:
             print("プレビュー表示中は Space / R / Esc も使えます。")
         if not self.enabled:
@@ -558,42 +579,46 @@ class HandMouseApp:
                         self._ignored_notice_shown = True
                         print(f"検出した手を「{side}」と判定して無視しています（設定 use_hand={self.cfg.use_hand}）。"
                               "これが実際の右手なら左右判定が逆です。"
-                              "--swap-hands を付けて起動するか、設定 swap_handedness を true にしてください。")
+                              "Ctrl+Alt+S で判定を入れ替えられます（設定に保存されます）。")
                 else:
                     self._ignored_since_first = 0.0
+                ignored_hands = [h for h in hands if h not in active_hands]
 
                 state = self.recognizer.update(active_hands)
                 self.process(state, now, dt)
 
+                # 画面上部の案内文（プレビュー・オーバーレイ共通）
                 status = self.status_text if now < self.status_until else ""
+                if status:
+                    hint = status
+                elif self.fist_since is not None and not self.fist_consumed:
+                    # 保持時間が長いので、あと何秒かを見せる
+                    held = now - self.fist_since
+                    hint = f"グー保持中 {held:.1f} / {self.cfg.fist_toggle_sec:.1f} 秒"
+                elif ignored_only:
+                    hint = (f"{'右' if self.cfg.use_hand == 'right' else '左'}手だけを使います"
+                            f"（{ignored_label}） Ctrl+Alt+S で左右入れ替え")
+                elif state.near_edge:
+                    hint = "手がカメラの端に近いです"
+                elif self.enabled:
+                    hint = ""
+                elif not state.hands:
+                    # 閉じた手は検出されにくいので、まず開いた手を見せてもらう
+                    hint = "手を開いてカメラに見せてください"
+                else:
+                    hint = "グーを3秒保持 または Ctrl+Alt+H で開始"
+
                 if use_preview:
                     view = render_hud(frame, self.renderer, self.cfg, state,
-                                      self.enabled, self.fps, status)
+                                      self.enabled, self.fps, hint, ignored_hands)
                     cv2.imshow(WINDOW_NAME, view)
                     if cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
                         break
                     self.handle_keys()
                 elif overlay is not None:
-                    if status:
-                        hint = status
-                    elif self.fist_since is not None and not self.fist_consumed:
-                        # 保持時間が長いので、あと何秒かを見せる
-                        held = now - self.fist_since
-                        hint = f"グー保持中 {held:.1f} / {self.cfg.fist_toggle_sec:.1f} 秒"
-                    elif ignored_only:
-                        hint = (f"{'右' if self.cfg.use_hand == 'right' else '左'}手だけを使います"
-                                f"（{ignored_label}）")
-                    elif state.near_edge:
-                        hint = "手がカメラの端に近いです"
-                    elif self.enabled:
-                        hint = ""
-                    elif not state.hands:
-                        # 閉じた手は検出されにくいので、まず開いた手を見せてもらう
-                        hint = "手を開いてカメラに見せてください"
-                    else:
-                        hint = "グーを3秒保持 または Ctrl+Alt+H で開始"
                     overlay.render(self.hands_to_screen(state.hands, state),
-                                   self.last_screen_pos, state, self.enabled, hint)
+                                   self.last_screen_pos, state, self.enabled, hint,
+                                   ghost_px=self.hands_to_screen(ignored_hands, state, anchor_cursor=False))
                     overlay.update()
                     if overlay.closed:
                         break
@@ -651,6 +676,7 @@ def main():
 
     try:
         app = HandMouseApp(cfg)
+        app.config_path = args.config
         app.run()
     except (RuntimeError, FileNotFoundError) as e:
         print(f"起動できませんでした: {e}")
