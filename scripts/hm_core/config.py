@@ -51,6 +51,16 @@ class Config:
     # 手のひら長（正規化座標）の基準。これより大きく映るほどブレが増えるので安定化を強める
     reference_palm_size: float = 0.15
 
+    # --- カーソルの動かし方 ---
+    #   absolute : カメラ内の操作エリアを画面全体に割り当てる（手の位置＝カーソル位置）
+    #   relative : 手の移動量×倍率でカーソルを動かす（タッチパッド方式。倍率で速さを自由に変えられる。
+    #              遠くへ行くときは手をカメラ外に出して戻す＝マウスを持ち上げる感覚）
+    mapping_mode: str = "absolute"
+    # relative のとき: カメラ映像上で手が1px動いたときにカーソルが動くpx数
+    relative_gain: float = 2.0
+    # relative のときの不感帯[px]。大きいと方向転換のたびに空振り（戻り）が出るので小さめ
+    relative_stabilizer_radius: float = 4.0
+
     # --- カーソル平滑化（One Euro Filter）---
     filter_min_cutoff: float = 0.35
     filter_beta: float = 0.0015
