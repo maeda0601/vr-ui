@@ -1,4 +1,5 @@
+# uv を使わない場合の pip 用（正は pyproject.toml / uv.lock）
 mediapipe>=1.0.0
-opencv-python>=4.8
+opencv-contrib-python>=4.8
 numpy>=1.24
 Pillow>=10.0

@@ -1,0 +1,20 @@
+[project]
+name = "vr-ui"
+version = "0.1.0"
+description = "Webカメラのハンドトラッキング（MediaPipe）でWindowsのマウスを操作するツール"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    # 手の21点検出（Tasks API）。依存で opencv-contrib-python も入る
+    "mediapipe>=1.0.0",
+    # imshow 付きの OpenCV。mediapipe が入れる contrib 版と同じ系統に揃え、
+    # opencv-python との二重インストール（cv2 の取り合い）を避ける
+    "opencv-contrib-python>=4.8",
+    "numpy>=1.24",
+    # 日本語テキスト描画とオーバーレイの合成
+    "Pillow>=10.0",
+]
+
+# スクリプト集なのでパッケージとしてはインストールしない（uv run scripts/... で実行する）
+[tool.uv]
+package = false

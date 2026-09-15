@@ -11,12 +11,13 @@ Python単体のデスクトップアプリで、Windows専用（ctypesでuser32�
 ## コマンド
 
 ```bash
-pip install -r requirements.txt          # mediapipe / opencv-python / numpy / Pillow
-python scripts/download_model.py         # models/hand_landmarker.task を取得（初回のみ、約7.8MB）
-python scripts/hand_mouse.py             # 起動（既定: 透過オーバーレイ表示、マウス操作は無効。Ctrl+Alt+Hで有効化）
-python scripts/hand_mouse.py --display preview   # カメラ映像＋HUDのウィンドウ表示（感度調整・デバッグ用）
-python scripts/hand_mouse.py --enable --camera 1 --display none   # 主なオプション
-python -m compileall -q scripts          # 構文チェック
+uv sync                                  # .venv に Python 3.12 と依存（mediapipe / opencv-contrib-python / numpy / Pillow）を入れる。pyproject.toml / uv.lock が正
+uv add <pkg>                             # 依存の追加はこれで（requirements.txt は pip 利用者向けの写しなので手で同期する）
+uv run scripts/download_model.py         # models/hand_landmarker.task を取得（初回のみ、約7.8MB）
+uv run scripts/hand_mouse.py             # 起動（既定: 透過オーバーレイ表示、マウス操作は無効。Ctrl+Alt+Hで有効化）
+uv run scripts/hand_mouse.py --display preview   # カメラ映像＋HUDのウィンドウ表示（感度調整・デバッグ用）
+uv run scripts/hand_mouse.py --enable --camera 1 --display none   # 主なオプション
+uv run python -m compileall -q scripts          # 構文チェック
 ```
 
 - 自動テストは無い。ジェスチャー判定は `hm_core.gestures.Hand` に `.x/.y` を持つダミーランドマーク21点を渡せば、カメラ無しで `GestureRecognizer.update()` を検証できる。
@@ -79,7 +80,7 @@ ZOOM（両手ともピンチ）→ LEFT（親指+人差し指）→ RIGHT（親�
 
 ### 環境の注意
 
-- `mediapipe` は `opencv-contrib-python` を依存で入れるため、`opencv-python` / `opencv-python-headless` と同居する。`cv2` は最後にインストールされた方に解決され、headless だと `imshow` が無い。プレビューが出なくなったら `pip install --force-reinstall opencv-python`。
+- `mediapipe` は `opencv-contrib-python` を依存で入れる。`opencv-python` / `opencv-python-headless` を同居させると `cv2` が最後に入った方に解決され、headless だと `imshow` が無い。pyproject では `opencv-contrib-python` だけを指定して二重インストールを避けている。uv の `.venv` はこれで一貫しているが、システムの Python（`python` 直叩き）には両方入っているので、プレビューが出なくなったら `uv run` で起動しているか確認する。
 - 実効フレームレートはカメラ側で決まることが多い（暗いと露光延長で半減）。検出自体は約18〜19ms/フレーム。
 
 ## 自動コミット

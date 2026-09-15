@@ -15,25 +15,32 @@ Webカメラに写した手の形と位置をMediaPipeで解析し、VRのハン
 
 ## セットアップ
 
-```bash
-pip install -r requirements.txt
-```
+依存関係は [uv](https://docs.astral.sh/uv/) で管理しています（`pyproject.toml` / `uv.lock`）。
+uv が無い場合は `pip install uv` か、公式のインストーラで入れてください。
 
 ```bash
-python scripts/download_model.py
+uv sync
+```
+
+`.venv` に Python 3.12 と依存パッケージ（mediapipe / opencv-contrib-python / numpy / Pillow）が入ります。
+
+```bash
+uv run scripts/download_model.py
 ```
 
 手のランドマーク検出モデル（約7.8MB）を `models/hand_landmarker.task` に保存します。
 社内プロキシ等でダウンロードできない場合は、スクリプト内のURLをブラウザで開いて
 同じ場所に手動で保存してください。
 
+uv を使わない場合は `pip install -r requirements.txt` でも動きます（その場合は以下の `uv run` を `python` に読み替えてください）。
+
 ## 起動
 
 ```bash
-python scripts/hand_mouse.py
+uv run scripts/hand_mouse.py
 ```
 
-`run_hand_mouse.bat` をダブルクリックしても起動できます。
+`run_hand_mouse.bat` をダブルクリックしても起動できます（内部で `uv run` を呼びます）。
 
 **安全のため、起動直後はマウス操作が無効**になっています。まず**手を開いてカメラに見せ**、
 灰色の骨格が出たら**グーを2秒保持**（または `Ctrl+Alt+H`）で有効化してください。
