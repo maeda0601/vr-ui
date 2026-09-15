@@ -212,6 +212,8 @@ class GestureRecognizer:
         self._right_pending = 0
         self._lock_on = False     # 中指ピンチによる位置固定（freeze_gesture=middle）
         self._lock_released_at = None   # 固定を離した時刻（余韻の判定用）
+        self._lock_started_at = None    # 固定を始めた時刻（固定窓の判定用）
+        self._lock_rearmed = True       # 親指が中指から一度離れて、次の固定を始められるか
         self._now = 0.0
 
     def reset(self):
@@ -223,6 +225,8 @@ class GestureRecognizer:
         self._right_pending = 0
         self._lock_on = False
         self._lock_released_at = None
+        self._lock_started_at = None
+        self._lock_rearmed = True
 
     def _lock_active(self):
         """固定中、または固定を離した直後の余韻（lock_grace_sec）の中か。"""
@@ -332,15 +336,31 @@ class GestureRecognizer:
         if middle_lock:
             d_middle = primary.pinch_to(MIDDLE_TIP)
             lock_was_on = self._lock_on
-            thresh = self.cfg.lock_pinch_off if self._lock_on else self.cfg.lock_pinch_on
-            lock = (d_middle < thresh
-                    and primary._extended(MIDDLE_TIP, MIDDLE_PIP, ratio=self.cfg.lock_finger_reach)
-                    and not right_on)
-            # 固定の開始は「親指が人差し指より中指に近い」ときだけ
-            # （親指を人差し指に付けただけで中指にも近づくため）。保持中は距離だけで維持
-            if not self._lock_on and d_middle >= d_index * self.cfg.lock_index_ratio:
-                lock = False
-            self._lock_on = lock
+            hold = self.cfg.lock_hold_sec
+            if not self._lock_on:
+                # 固定の開始: 親指が中指に十分近く、人差し指より中指に近いとき
+                # （親指を人差し指に付けただけで中指にも近づくため）。
+                # 前回の固定が切れた後は、親指を一度離してからでないと始めない
+                start = (self._lock_rearmed
+                         and d_middle < self.cfg.lock_pinch_on
+                         and d_middle < d_index * self.cfg.lock_index_ratio
+                         and primary._extended(MIDDLE_TIP, MIDDLE_PIP,
+                                               ratio=self.cfg.lock_finger_reach)
+                         and not right_on)
+                if start:
+                    self._lock_on = True
+                    self._lock_started_at = self._now
+                    self._lock_rearmed = False
+            elif hold > 0:
+                # 固定窓: 親指が離れても解除せず、一定時間で自動解除
+                if self._now - self._lock_started_at >= hold:
+                    self._lock_on = False
+            else:
+                # 従来どおり: つまんでいる間だけ（距離のヒステリシスで維持）
+                if d_middle >= self.cfg.lock_pinch_off or right_on:
+                    self._lock_on = False
+            if not self._lock_on and d_middle >= self.cfg.lock_pinch_off:
+                self._lock_rearmed = True
             # 離した後も余韻の間は固定位置を保つ（その間の右／左クリックを受け付ける）
             if self._lock_on:
                 self._lock_released_at = None

@@ -493,17 +493,25 @@ class HandMouseApp:
             if entered:
                 # 固定位置／指先から「指の中点」へ基準点が変わるので、飛ばないように継ぎ直す
                 self.reanchor(state.cursor)
-            self.frozen = False
-            self.apply_cursor(state.cursor, now, dt)
-            if self.enabled:
-                self.mouse.press_left()
+            if self.cfg.left_drag_enabled:
+                self.frozen = False
+                self.apply_cursor(state.cursor, now, dt)
+                if self.enabled:
+                    self.mouse.press_left()       # つまんでいる間は押しっぱなし（ドラッグ）
+            else:
+                # 押して離すだけ。固定中はその位置のまま動かさない
+                if not self.frozen:
+                    self.apply_cursor(state.cursor, now, dt)
+                if entered and self.enabled:
+                    self.mouse.click_left()
 
         elif mode == G.MODE_RIGHT:
             if entered:
                 self.reanchor(state.cursor)
-            self.frozen = False
-            self.decay_offset(dt)
-            self.apply_cursor(state.cursor, now, dt)
+            # 固定中はその位置のまま動かさない
+            if not self.frozen:
+                self.decay_offset(dt)
+                self.apply_cursor(state.cursor, now, dt)
             if entered and self.enabled:
                 self.mouse.click_right()
 
@@ -660,6 +668,10 @@ class HandMouseApp:
                 elif (self.enabled and state.lock_tip is not None
                       and self.cfg.lock_drag_sec > 0):
                     hint = f"固定中 {state.lock_held_sec:.1f} / {self.cfg.lock_drag_sec:.1f} 秒でドラッグ"
+                elif (self.enabled and state.lock_tip is not None
+                      and self.cfg.lock_hold_sec > 0):
+                    remain = max(0.0, self.cfg.lock_hold_sec - state.lock_held_sec)
+                    hint = f"位置固定中 あと {remain:.1f} 秒"
                 elif self.enabled:
                     hint = ""
                 elif not state.hands:

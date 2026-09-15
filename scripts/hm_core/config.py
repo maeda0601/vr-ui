@@ -67,12 +67,17 @@ class Config:
     freeze_gesture: str = "approach"
     # 中指ピンチ固定の判定（つまむと中指が曲がるので、クリックより緩い条件にする）
     lock_pinch_on: float = 0.55      # 固定開始の距離（手の大きさで正規化）
-    lock_pinch_off: float = 0.75     # 固定解除の距離（ヒステリシス）
+    lock_pinch_off: float = 0.75     # 固定解除の距離（lock_hold_sec=0 のとき）／次の固定を許す距離
+    # 固定をこの秒数で自動解除する（親指が離れても解除しない「固定窓」）。
+    # 0 にすると従来どおり親指＋中指をつまんでいる間だけ固定
+    lock_hold_sec: float = 1.5
     lock_finger_reach: float = 0.60  # 中指の曲がりの許容（指先が第二関節×この値より遠ければ可）
     lock_index_ratio: float = 1.00   # 固定開始は「中指距離 < 人差し指距離×この値」のときだけ
     # 固定をこの秒数続けると左ボタンを押した状態になり、そのまま動かすとドラッグ／範囲選択
-    # （0 で無効）
-    lock_drag_sec: float = 1.5
+    # （0 で無効。lock_hold_sec より短いときだけ意味がある）
+    lock_drag_sec: float = 0.0
+    # 親指＋人差し指をつまんだまま動かしたときにドラッグするか（false なら押して離すクリックのみ）
+    left_drag_enabled: bool = True
     # 固定を離した後もこの秒数は固定位置を保ち、その間の
     # 親指＋薬指（右クリック）／親指＋人差し指（左クリック）を受け付ける
     lock_grace_sec: float = 1.5

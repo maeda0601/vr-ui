@@ -116,6 +116,12 @@ class MouseController:
             _send(_mouse_input(MOUSEEVENTF_LEFTUP))
             self.left_down = False
 
+    def click_left(self):
+        """左ボタンを押して離す（ドラッグなしのクリック）。"""
+        self.left_down = False
+        _send(_mouse_input(MOUSEEVENTF_LEFTDOWN),
+              _mouse_input(MOUSEEVENTF_LEFTUP))
+
     def click_right(self):
         _send(_mouse_input(MOUSEEVENTF_RIGHTDOWN),
               _mouse_input(MOUSEEVENTF_RIGHTUP))
