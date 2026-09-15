@@ -421,7 +421,9 @@ class HandOverlay:
 
         # 手元のモード名（VRのツールチップ風）
         label = MODE_LABELS.get(state.mode, "") if hands_px else ""
-        if hands_px and state.mode == MODE_POINT and state.arming:
+        if hands_px and state.mode == MODE_POINT and state.lock_drag:
+            label = "ドラッグ中"
+        elif hands_px and state.mode == MODE_POINT and state.arming:
             label = "位置固定中"
         if label:
             color = {MODE_LEFT: RGB_LEFT, MODE_RIGHT: RGB_RIGHT}.get(state.mode, RGB_ACCENT)
@@ -441,6 +443,10 @@ class HandOverlay:
         r = int(14 + max(0.0, min(pinch, 1.2)) * 22)
         if not enabled:
             cv2.circle(img, center, r, _bgra(*RGB_BONE_OFF), 3, cv2.LINE_AA)
+        elif state.mode == MODE_POINT and state.lock_drag:
+            # 固定からのドラッグ中は左クリックと同じ緑
+            cv2.circle(img, center, r, _bgra(*RGB_LEFT, 120), -1, cv2.LINE_AA)
+            cv2.circle(img, center, r, _bgra(*RGB_LEFT), 3, cv2.LINE_AA)
         elif state.mode == MODE_POINT and state.arming:
             # クリック準備（カーソル固定中）は黄色の太いリングで知らせる
             cv2.circle(img, center, r, _bgra(*RGB_ACCENT, 90), -1, cv2.LINE_AA)

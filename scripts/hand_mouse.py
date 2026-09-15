@@ -93,6 +93,8 @@ class HandMouseApp:
         self.freeze_since = None      # 固定開始時刻
         self.freeze_raw = None        # 固定開始時の生の写像位置（移動量の判定用）
         self.arm_suppressed = False   # 固定を自動解除した後、指が離れるまで再固定しない
+        self.lock_since = None        # 中指ピンチ固定の開始時刻（ドラッグ移行の判定用）
+        self.lock_drag = False        # 固定を続けてドラッグ（左ボタン押下）に移行した
         self.skeleton_prev = []       # オーバーレイ骨格の平滑化用（手ごとの前フレーム座標）
         self.noise_gain = 1.0         # 状況に応じた安定化の倍率（端・手の大きさで増える）
         self._single_allowed = True   # 手が1つのときの採用状態（左右判定のちらつき対策）
@@ -164,6 +166,8 @@ class HandMouseApp:
         self.mouse.release_all()
         self.offset = [0.0, 0.0]
         self.frozen = False
+        self.lock_since = None
+        self.lock_drag = False
         self.prev_scroll_anchor = None
         self.prev_zoom_distance = None
         self.scroll_accum = 0.0
@@ -402,7 +406,7 @@ class HandMouseApp:
                 and state.cursor is not None and self.last_screen_pos is not None):
             self.reanchor(state.cursor)
 
-        if mode != G.MODE_LEFT:
+        if mode != G.MODE_LEFT and not self.lock_drag:
             self.mouse.release_left()
         if mode != G.MODE_SCROLL:
             self.prev_scroll_anchor = None
@@ -411,7 +415,34 @@ class HandMouseApp:
             self.prev_zoom_distance = None
             self.zoom_accum = 0.0
 
-        if mode == G.MODE_POINT:
+        # 中指ピンチ固定の継続時間。一定時間続いたらドラッグ（左ボタン押下）に移行する
+        locked = mode == G.MODE_POINT and state.lock_tip is not None
+        if locked:
+            if self.lock_since is None:
+                self.lock_since = now
+            state.lock_held_sec = now - self.lock_since
+            if (not self.lock_drag and self.cfg.lock_drag_sec > 0
+                    and state.lock_held_sec >= self.cfg.lock_drag_sec):
+                self.lock_drag = True
+                self.notify("ドラッグ開始（指を離すと終了）", 1.5)
+        elif mode != G.MODE_LEFT or state.lock_tip is None:
+            # 固定が外れた（LEFT中に固定が続いている間はドラッグを維持する）
+            self.lock_since = None
+            if self.lock_drag:
+                self.lock_drag = False
+                self.mouse.release_left()
+        state.lock_drag = self.lock_drag
+
+        if mode == G.MODE_POINT and self.lock_drag:
+            # 固定からのドラッグ: 固定を解いて追従させ、左ボタンは押したまま
+            if self.frozen:
+                self.reanchor(state.cursor)
+                self.frozen = False
+            self.apply_cursor(state.cursor, now, dt)
+            if self.enabled:
+                self.mouse.press_left()
+
+        elif mode == G.MODE_POINT:
             self.decay_offset(dt)
             if not state.arming:
                 self.arm_suppressed = False
@@ -599,6 +630,11 @@ class HandMouseApp:
                             f"（{ignored_label}） Ctrl+Alt+S で左右入れ替え")
                 elif state.near_edge:
                     hint = "手がカメラの端に近いです"
+                elif self.enabled and state.lock_drag:
+                    hint = "ドラッグ中（指を離すと終了）"
+                elif (self.enabled and state.lock_tip is not None
+                      and self.cfg.lock_drag_sec > 0):
+                    hint = f"固定中 {state.lock_held_sec:.1f} / {self.cfg.lock_drag_sec:.1f} 秒でドラッグ"
                 elif self.enabled:
                     hint = ""
                 elif not state.hands:

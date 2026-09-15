@@ -187,6 +187,8 @@ class GestureState:
     right_tip: int = RING_TIP     # 右クリックに使う指先の番号（描画用）
     arming: bool = False          # 親指が近づいていてカーソル固定中（クリック準備）
     lock_tip: int = None          # 固定ジェスチャーでつまんでいる指先（描画用。中指ピンチ固定のとき）
+    lock_drag: bool = False       # 固定を続けてドラッグに移行した（本体側が描画用に立てる）
+    lock_held_sec: float = 0.0    # 固定の継続時間（本体側が描画用に入れる）
     near_edge: bool = False       # 手のひらがカメラ映像の端に近い（検出が不安定になる）
     edge_factor: float = 0.0      # 端への近さ（0=十分内側, 1=端に接触）。安定化の強さに使う
 
@@ -308,12 +310,13 @@ class GestureRecognizer:
         middle_lock = self._middle_lock_enabled()
         if middle_lock:
             d_middle = primary.pinch_to(MIDDLE_TIP)
-            lock = (self._pinch_state(d_middle, self._lock_on)
-                    and primary.finger_reaching(MIDDLE_TIP, MIDDLE_PIP)
+            thresh = self.cfg.lock_pinch_off if self._lock_on else self.cfg.lock_pinch_on
+            lock = (d_middle < thresh
+                    and primary._extended(MIDDLE_TIP, MIDDLE_PIP, ratio=self.cfg.lock_finger_reach)
                     and not right_on)
-            # 固定の開始は「親指が人差し指より明確に中指に近い」ときだけ
+            # 固定の開始は「親指が人差し指より中指に近い」ときだけ
             # （親指を人差し指に付けただけで中指にも近づくため）。保持中は距離だけで維持
-            if not self._lock_on and d_middle >= d_index * 0.8:
+            if not self._lock_on and d_middle >= d_index * self.cfg.lock_index_ratio:
                 lock = False
             self._lock_on = lock
             self._arm_on = self._lock_on
@@ -363,7 +366,7 @@ class GestureRecognizer:
         if (primary.index_extended and primary.middle_extended
                 and not primary.ring_extended and not primary.pinky_extended
                 and not self._lock_on
-                and primary.pinch_to(MIDDLE_TIP) > self.cfg.pinch_off):
+                and primary.pinch_to(MIDDLE_TIP) > self.cfg.lock_pinch_off):
             state.mode = MODE_SCROLL
             state.scroll_anchor = primary.center[1]
             return state
