@@ -93,6 +93,7 @@ class HandMouseApp:
         self.freeze_since = None      # 固定開始時刻
         self.freeze_raw = None        # 固定開始時の生の写像位置（移動量の判定用）
         self.arm_suppressed = False   # 固定を自動解除した後、指が離れるまで再固定しない
+        self.no_hand_since = None     # 手が見えなくなった時刻（一定時間で操作を無効にする）
         self.lock_since = None        # 中指ピンチ固定の開始時刻（ドラッグ移行の判定用）
         self.lock_drag = False        # 固定を続けてドラッグ（左ボタン押下）に移行した
         self.skeleton_prev = []       # オーバーレイ骨格の平滑化用（手ごとの前フレーム座標）
@@ -393,12 +394,30 @@ class HandMouseApp:
             self.fist_consumed = True
             self.set_enabled(not self.enabled)
 
+    def handle_idle(self, mode, now):
+        """手が一定時間見えなければ操作を無効にする（置き忘れ・離席時の安全装置）。"""
+        if mode != G.MODE_IDLE:
+            self.no_hand_since = None
+            return
+        if self.no_hand_since is None:
+            self.no_hand_since = now
+            return
+        limit = self.cfg.idle_disable_sec
+        if self.enabled and limit > 0 and now - self.no_hand_since >= limit:
+            self.set_enabled(False)
+            self.notify("手が見えなくなったので操作を無効にしました", 3.0)
+
+    def idle_seconds(self, now):
+        """手が見えなくなってからの経過秒数（見えていれば0）。"""
+        return 0.0 if self.no_hand_since is None else now - self.no_hand_since
+
     def process(self, state, now, dt):
         """判定結果をマウス操作へ反映する。"""
         mode = state.mode
         entered = mode != self.prev_mode
 
         self.handle_fist(mode, now)
+        self.handle_idle(mode, now)
         self.update_noise_gain(state)
 
         # 手を見失って復帰したときは、直前のカーソル位置から滑らかにつなぐ
@@ -632,6 +651,10 @@ class HandMouseApp:
                             f"（{ignored_label}） Ctrl+Alt+S で左右入れ替え")
                 elif state.near_edge:
                     hint = "手がカメラの端に近いです"
+                elif (self.enabled and state.mode == G.MODE_IDLE
+                      and self.cfg.idle_disable_sec > 0):
+                    hint = (f"手が見えません {self.idle_seconds(now):.1f} / "
+                            f"{self.cfg.idle_disable_sec:.1f} 秒で無効")
                 elif self.enabled and state.lock_drag:
                     hint = "ドラッグ中（指を離すと終了）"
                 elif (self.enabled and state.lock_tip is not None

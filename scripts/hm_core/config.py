@@ -114,6 +114,8 @@ class Config:
 
     # --- グー（握り拳）で有効/無効をトグルする保持時間[秒] ---
     fist_toggle_sec: float = 2.0
+    # 手がカメラから消えてこの秒数経ったら操作を無効にする（0で無効化しない）
+    idle_disable_sec: float = 3.0
 
     # --- 安全マージン（画面端に張り付かせない）[px] ---
     screen_margin_px: int = 2
