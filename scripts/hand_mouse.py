@@ -677,6 +677,8 @@ class HandMouseApp:
                 elif ignored_only:
                     hint = (f"{'右' if self.cfg.use_hand == 'right' else '左'}手だけを使います"
                             f"（{ignored_label}） Ctrl+Alt+S で左右入れ替え")
+                elif state.fingers_out:
+                    hint = "指先がカメラの外に出ています（手を中央寄りに）"
                 elif state.near_edge:
                     hint = "手がカメラの端に近いです"
                 elif (self.enabled and state.mode == G.MODE_IDLE

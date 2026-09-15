@@ -164,6 +164,17 @@ class Hand:
             best = min(best, x, 1.0 - x, y, 1.0 - y)
         return max(best, 0.0)
 
+    def fingertips_out_of_frame(self, margin=0.02):
+        """指先のどれかがフレームの外（または端ぎりぎり）にあるか。
+
+        見えていない指先はMediaPipeが推定で埋めるため、ピンチ距離が信用できなくなる。
+        """
+        for i in (THUMB_TIP, INDEX_TIP, MIDDLE_TIP, RING_TIP, PINKY_TIP):
+            x, y = self.points[i]
+            if x < margin or x > 1.0 - margin or y < margin or y > 1.0 - margin:
+                return True
+        return False
+
     def near_frame_edge(self, margin):
         """手のひらの点のどれかがフレーム端から margin 以内にあるか。"""
         return self.edge_distance() < margin
@@ -197,6 +208,7 @@ class GestureState:
     lock_block: str = ""          # 固定が始まらない理由（--debug 表示用。空なら固定可）
     lock_held_sec: float = 0.0    # 固定の継続時間（本体側が描画用に入れる）
     near_edge: bool = False       # 手のひらがカメラ映像の端に近い（検出が不安定になる）
+    fingers_out: bool = False     # 指先がカメラ映像の外に出ている（ピンチ判定が効かない）
     edge_factor: float = 0.0      # 端への近さ（0=十分内側, 1=端に接触）。安定化の強さに使う
 
 
@@ -301,6 +313,7 @@ class GestureRecognizer:
             pinch_right=primary.pinch_to(right_tip),
             right_tip=right_tip,
             near_edge=primary.near_frame_edge(self.cfg.edge_warn_margin),
+            fingers_out=primary.fingertips_out_of_frame(),
         )
         zone = self.cfg.edge_zone
         if zone > 0:

@@ -105,7 +105,7 @@ Webカメラに写した手の形と位置で、Windowsのマウスを操作す�
 | `left_drag_enabled` | true | ピンチしたまま動かすドラッグ。false でクリックのみ |
 | `cursor_gain` | 1.0 | カーソル感度。小さくするとゆっくり（手を大きく動かす必要がある） |
 | `active_margin_x` | 0.18 | 操作エリアの左右余白 |
-| `active_margin_top` / `active_margin_bottom` | 0.10 / 0.32 | 操作エリアの上下余白 |
+| `active_margin_top` / `active_margin_bottom` | 0.26 / 0.32 | 操作エリアの上下余白（上は指、下は手首のぶん必要） |
 | `overlay_hand_size` | 70 | 描画する手の大きさ[px] |
 | `overlay_alpha` | 0.85 | オーバーレイの不透明度 |
 | `fist_toggle_sec` | 2.0 | グーの保持時間[秒] |

@@ -25,15 +25,17 @@ class Config:
     # --- 操作エリア（カメラ画像の端は使わない。値は正規化座標の余白）---
     # 上下は非対称にする。基準点（手のひら中心）より下に手首があるため、下の余白を
     # 大きく取らないと画面の一番下を狙うときに手がフレームから切れて検出が不安定になる
+    # 上も同様に、基準点より上に指（手のひら長の約1.3倍）があるので、その分の余白が必要。
+    # 詰めすぎると画面上端を狙うときに指先がフレーム外に出て、ピンチ判定が効かなくなる
     active_margin_x: float = 0.18
-    active_margin_top: float = 0.10
+    active_margin_top: float = 0.26
     active_margin_bottom: float = 0.32
     # カーソル感度。1.0 で上の余白どおり。小さくすると操作エリアが広がり、同じ画面幅に
     # 対して手を大きく動かす必要がある（＝カーソルがゆっくりになる）。
     # 広げてもフレーム端に寄り過ぎないよう、余白は下の最小値で止める
     cursor_gain: float = 1.0
     min_margin_x: float = 0.05
-    min_margin_top: float = 0.04
+    min_margin_top: float = 0.24
     min_margin_bottom: float = 0.25
     # 手のひらの点がこの距離までフレーム端に近づいたら警告を表示する
     edge_warn_margin: float = 0.06
