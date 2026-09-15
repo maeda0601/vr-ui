@@ -34,7 +34,7 @@
   "lock_hold_sec": 1.5,
   "lock_rearm_distance": 0.6,
   "lock_finger_reach": 0.6,
-  "lock_index_ratio": 1.0,
+  "lock_index_ratio": 1.5,
   "lock_drag_sec": 0.0,
   "left_drag_enabled": false,
   "lock_grace_sec": 0.0,

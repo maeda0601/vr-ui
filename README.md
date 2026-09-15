@@ -136,7 +136,7 @@ python scripts/hand_mouse.py
 | `lock_grace_sec` | 1.5 | （`middle` のとき）固定を離した後もこの秒数は固定位置を保ち、その間の親指＋薬指＝右クリック／親指＋人差し指＝左クリックを受け付ける |
 | `lock_pinch_on` / `lock_pinch_off` | 0.55 / 0.75 | 固定の開始／解除の距離。反応しにくければ `--debug` で「固定NG: 理由」を見て調整 |
 | `lock_rearm_distance` | 0.60 | 固定が切れた後、親指が中指からこの距離以上離れたら次の固定を始められる |
-| `lock_finger_reach` / `lock_index_ratio` | 0.60 / 1.00 | 固定開始時の中指の曲がりの許容（伸び比がこれ以上）と、人差し指との距離比（中指距離 < 人差し指距離×この値） |
+| `lock_finger_reach` / `lock_index_ratio` | 0.60 / 1.50 | 固定開始時の中指の曲がりの許容（伸び比がこれ以上）と、隣の指との距離比（中指距離 < 人差し指・薬指の距離×この値。親指を人差し指や薬指に付けただけでは固定しない） |
 | `right_click_finger` | `ring` | 右クリックで親指とつまむ指。`ring`（薬指）/ `middle`（中指）/ `pinky`（小指） |
 | `use_hand` | `right` | 操作に使う手。`right` / `left` / `both`。`both` 以外では両手ズームは使えない |
 | `swap_handedness` | false | 左右の判定が逆になる場合に true |

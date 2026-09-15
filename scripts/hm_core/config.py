@@ -75,7 +75,7 @@ class Config:
     # （力を抜いた手でも届く値にしておく。lock_pinch_on より少し大きい程度）
     lock_rearm_distance: float = 0.60
     lock_finger_reach: float = 0.60  # 中指の曲がりの許容（指先が第二関節×この値より遠ければ可）
-    lock_index_ratio: float = 1.00   # 固定開始は「中指距離 < 人差し指距離×この値」のときだけ
+    lock_index_ratio: float = 1.50   # 固定開始は「中指距離 < 人差し指距離×この値」のときだけ（人差し指は中指の隣なので余裕を持たせる）
     # 固定をこの秒数続けると左ボタンを押した状態になり、そのまま動かすとドラッグ／範囲選択
     # （0 で無効。lock_hold_sec より短いときだけ意味がある）
     lock_drag_sec: float = 0.0

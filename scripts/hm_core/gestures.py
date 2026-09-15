@@ -349,6 +349,8 @@ class GestureRecognizer:
                     reasons.append(f"中指の距離 {d_middle:.2f}≥{self.cfg.lock_pinch_on}")
                 if d_middle >= d_index * self.cfg.lock_index_ratio:
                     reasons.append("人差し指の方が近い")
+                if d_middle >= primary.pinch_to(RING_TIP) * self.cfg.lock_index_ratio:
+                    reasons.append("薬指の方が近い")
                 if not primary._extended(MIDDLE_TIP, MIDDLE_PIP, ratio=self.cfg.lock_finger_reach):
                     reasons.append("中指を握り込んでいる")
                 if right_on:
