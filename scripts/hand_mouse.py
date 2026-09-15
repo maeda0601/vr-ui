@@ -176,11 +176,9 @@ class HandMouseApp:
         clamp=False にすると画面外へはみ出した座標もそのまま返す
         （オーバーレイで手が画面端から切れて見えるようにするため）。
         """
-        cfg = self.cfg
-        span_x = max(1e-6, 1.0 - 2.0 * cfg.active_margin_x)
-        span_y = max(1e-6, 1.0 - cfg.active_margin_top - cfg.active_margin_bottom)
-        ax = (nx - cfg.active_margin_x) / span_x
-        ay = (ny - cfg.active_margin_top) / span_y
+        x0, y0, x1, y1 = self.cfg.active_area()
+        ax = (nx - x0) / max(1e-6, x1 - x0)
+        ay = (ny - y0) / max(1e-6, y1 - y0)
         if clamp:
             ax, ay = clamp01(ax), clamp01(ay)
         return ax * (self.mouse.screen_w - 1), ay * (self.mouse.screen_h - 1)

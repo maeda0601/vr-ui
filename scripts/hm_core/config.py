@@ -28,6 +28,13 @@ class Config:
     active_margin_x: float = 0.18
     active_margin_top: float = 0.10
     active_margin_bottom: float = 0.32
+    # カーソル感度。1.0 で上の余白どおり。小さくすると操作エリアが広がり、同じ画面幅に
+    # 対して手を大きく動かす必要がある（＝カーソルがゆっくりになる）。
+    # 広げてもフレーム端に寄り過ぎないよう、余白は下の最小値で止める
+    cursor_gain: float = 1.0
+    min_margin_x: float = 0.05
+    min_margin_top: float = 0.04
+    min_margin_bottom: float = 0.25
     # 手のひらの点がこの距離までフレーム端に近づいたら警告を表示する
     edge_warn_margin: float = 0.06
     # フレーム端からこの範囲に入ると、近いほど安定化を強める（0で無効）
@@ -111,6 +118,28 @@ class Config:
     # オーバーレイの手の大きさ（手のひら＝手首〜中指付け根の長さ[px]）。
     # カメラとの距離に関係なく一定サイズで描く。0にすると生の写像で描く
     overlay_hand_size: int = 70
+
+    def active_area(self):
+        """cursor_gain を反映した操作エリア (x0, y0, x1, y1) を正規化座標で返す。
+
+        余白で決まる範囲を中心はそのままに 1/cursor_gain 倍に広げ（縮め）、
+        フレーム端に寄り過ぎないよう各余白の最小値で止める。
+        """
+        gain = max(0.3, float(self.cursor_gain))
+
+        def expand(lo, hi, min_lo, min_hi):
+            span = 1.0 - lo - hi
+            center = lo + span / 2.0
+            new_span = span / gain
+            new_lo = max(center - new_span / 2.0, min_lo)
+            new_hi = max(1.0 - (center + new_span / 2.0), min_hi)
+            return new_lo, 1.0 - new_hi
+
+        x0, x1 = expand(self.active_margin_x, self.active_margin_x,
+                        self.min_margin_x, self.min_margin_x)
+        y0, y1 = expand(self.active_margin_top, self.active_margin_bottom,
+                        self.min_margin_top, self.min_margin_bottom)
+        return x0, y0, x1, y1
 
     @classmethod
     def load(cls, path):

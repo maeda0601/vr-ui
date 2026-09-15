@@ -76,10 +76,8 @@ class TextRenderer:
 def draw_active_area(frame, cfg):
     """操作エリア（この矩形が画面全体に対応する）を描く。"""
     h, w = frame.shape[:2]
-    x0 = int(cfg.active_margin_x * w)
-    y0 = int(cfg.active_margin_top * h)
-    x1 = int((1.0 - cfg.active_margin_x) * w)
-    y1 = int((1.0 - cfg.active_margin_bottom) * h)
+    ax0, ay0, ax1, ay1 = cfg.active_area()
+    x0, y0, x1, y1 = int(ax0 * w), int(ay0 * h), int(ax1 * w), int(ay1 * h)
     cv2.rectangle(frame, (x0, y0), (x1, y1), COL_AREA, 1, cv2.LINE_AA)
     # 四隅だけ太くしてVRのプレイエリアらしく見せる
     for cx, cy, dx, dy in ((x0, y0, 1, 1), (x1, y0, -1, 1),
