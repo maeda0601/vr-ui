@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# MediaPipe の検出モデル（約7.8MB）。python scripts/download_model.py で取得する
+models/*.task
+
+# エディタ・OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

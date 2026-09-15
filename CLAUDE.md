@@ -1,0 +1,79 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## プロジェクト概要
+
+Webカメラの手の動き（MediaPipe HandLandmarker）でWindowsのマウスを操作するツール。
+VRのハンドトラッキング風に、カメラ内の操作エリアを画面全体へ割り当てる絶対座標方式。
+Python単体のデスクトップアプリで、Windows専用（ctypesでuser32を直接呼ぶ）。利用者向けの説明は [README.md](README.md)。
+
+## コマンド
+
+```bash
+pip install -r requirements.txt          # mediapipe / opencv-python / numpy / Pillow
+python scripts/download_model.py         # models/hand_landmarker.task を取得（初回のみ、約7.8MB）
+python scripts/hand_mouse.py             # 起動（既定: 透過オーバーレイ表示、マウス操作は無効。Ctrl+Alt+Hで有効化）
+python scripts/hand_mouse.py --display preview   # カメラ映像＋HUDのウィンドウ表示（感度調整・デバッグ用）
+python scripts/hand_mouse.py --enable --camera 1 --display none   # 主なオプション
+python -m compileall -q scripts          # 構文チェック
+```
+
+- 自動テストは無い。ジェスチャー判定は `hm_core.gestures.Hand` に `.x/.y` を持つダミーランドマーク21点を渡せば、カメラ無しで `GestureRecognizer.update()` を検証できる。
+- 手を検出しないまま動作確認したいときは `enable_on_start=false`（既定）のまま起動すれば、マウスには一切触れない。
+- 設定は初回起動時に `scripts/hand_mouse_config.json` が自動生成される。`Config` dataclass にフィールドを追加すればJSONにも自動で載る（未知キーは無視される）。
+
+## アーキテクチャ
+
+1フレームの流れ（`scripts/hand_mouse.py` の `HandMouseApp.run`）:
+
+```
+CameraStream(別スレッド, 最新フレームのみ保持)
+  → cv2.flip で鏡像化  ※以降の正規化座標はすべて鏡像空間
+  → HandLandmarker.detect_for_video(VIDEO mode, 単調増加のtimestamp_ms 必須)
+  → Hand（特徴量: 指の伸展・ピンチ距離。手のサイズ dist(手首,中指付け根) で正規化しカメラ距離に依存させない）
+  → GestureRecognizer.update()  … 状態を持つ（ピンチのヒステリシス）。モードを1つ返す
+  → HandMouseApp.process()      … フレーム間状態（ドラッグ用オフセット、スクロール/ズーム累積、グー保持タイマー）
+  → MouseController（SetCursorPos / SendInput）
+  → 表示: display_mode により HandOverlay（透過オーバーレイ, 既定） / overlay.render_hud（カメラプレビュー） / なし
+```
+
+### 透過オーバーレイ（`hm_core/overlay_window.py`）
+
+- ctypes直叩きの Win32 レイヤードウィンドウ（`WS_EX_LAYERED|TRANSPARENT|TOPMOST|TOOLWINDOW|NOACTIVATE`）に、ピクセル単位アルファのBGRA画像を `UpdateLayeredWindow` で流し込む。Tkinter の `-transparentcolor`（カラーキー）はDWM合成で太線が点線状に欠けて見えたため採用していない。
+- ウィンドウは2枚: 手の外接矩形＋余白だけを覆って毎フレーム移動する `hand_win` と、上部中央の状態表示 `pill_win`（文言が変わったときだけ再描画）。全画面を毎フレーム描き直さないのが性能の要。
+- 画像は **プリマルチプライドBGRA** で作る。図形は `cv2`（`LINE_AA`、色は `_bgra()` で事前にアルファを掛ける）、文字は PIL で描いて `_premultiply()` → `_blit()` で合成する。PILのストレートアルファをそのまま流すと縁が黒くなる。
+- メッセージポンプ: `HotkeyManager.poll()` がスレッド宛の全メッセージを取り、`WM_HOTKEY` 以外は `DispatchMessageW` で配送する。`HandOverlay.update()` は自ウィンドウ宛だけを `PeekMessageW(hwnd)` で処理する（`hwnd=None` にするとホットキーを横取りしてしまう）。ウィンドウ生成・更新はメインスレッドから行う。
+- 骨格の画面座標は `HandMouseApp.hands_to_screen()` が `map_to_screen(clamp=False)` で作る。カーソルと違ってクランプしないので、手が画面端から切れて見える。
+- DIB はウィンドウサイズが変わったときだけ作り直す（サイズは `SIZE_STEP` 単位に丸める）。`overlay_alpha` は画像全体を `cv2.convertScaleAbs` で一律に薄める。
+
+### モード判定の優先順位（`hm_core/gestures.py`）
+
+ZOOM（両手ともピンチ）→ LEFT（親指+人差し指）→ RIGHT（親指+中指）→ FIST → SCROLL（チョキ）→ POINT → NONE。
+ピンチはFISTより先に見る（つまむと他の指が閉じてグーに見えるため）。FISTは「4本指を握り込んでいる」（指先が第二関節より手首側、`_curled`）で判定し、「伸びていない」では判定しない。左ピンチは `index_curled` でないことも要求する（グーの中で親指が人差し指先に触れてもクリックしない）。POINTは `cursor_landmark` が `index_tip` のときだけ人差し指の伸展を要求し、それ以外は開いた手なら何でもよい（クリック後に緩んだ手で操作が途切れないため）。
+右クリックは「中指距離 < 人差し指距離×0.8」かつ `middle_reaching`（中指を握り込んでいない）のときだけ採用する。人差し指を立てた姿勢では親指が曲げた中指に触れがちで、これが無いと誤発火する。
+新しいジェスチャーを足すときはこの順序のどこに入れるか（既存ジェスチャーとの排他）を先に決めること。
+
+### 変更時に壊しやすい設計上の約束
+
+- **`enabled` はマウス出力だけをゲートする。** ジェスチャー判定と `handle_fist` は無効中も動く（グー保持で再有効化するため）。`process()` 内で `self.enabled` を見ずに `mouse.*` を呼ばないこと。
+- **安全装置は残す**: 無効化・終了時の `mouse.release_all()`、`enable_on_start=False` 既定、`Ctrl+Alt+Q/H/R` のグローバルホットキー、画面端の `screen_margin_px` クランプ。ホットキーはスレッド束縛のメッセージキューに届くため、`HotkeyManager.register/poll` はメインスレッドから呼ぶ。オーバーレイはフォーカスを取らないので、`Space/R/Esc` のキー操作は `display_mode=preview`（cv2ウィンドウ）のときしか効かない。ユーザー向けの操作案内はホットキーを基準に書く。
+- **クリック位置ズレ対策は2段構え**: (1) 親指–人差し指の距離が `pinch_arm` を外から内へ横切った瞬間に `state.arming` がラッチし（`_update_arming`。最初から近い姿勢では立たない。中指は見ない）、`process()` は `self.frozen=True` でカーソルを止める。固定中に `arm_cancel_px` 以上動くか `arm_timeout_sec` を過ぎたら解除し、指が離れるまで `arm_suppressed` で再固定しない。(2) 基準点が変わる瞬間（固定解除、LEFT/RIGHT突入で指先→指の中点）は `reanchor()` で `self.offset` を取り直し、フィルタをリセットして飛びを防ぐ。オフセットは `decay_offset` で滑らかに戻す。カーソル基準点（`cursor_landmark`）を変える変更をするなら、この仕組みも合わせて見直す。
+- **カーソルの安定化は3層**: 基準点（`cursor_landmark`、既定 `palm`＝手首＋4指付け根の平均。指先は最もブレる）→ One Euro Filter（`filters.py`）→ `stabilize()` の不感帯（`stabilizer_radius` px 以内は不動、超えた分だけ引き寄せる）。`apply_cursor()` はこの順で通す。層を足す・外すときは `reanchor()`（`last_screen_pos` からの連続性）が壊れないか確認する。
+- **骨格の表示は別系統で平滑化する**: `smooth_skeleton()`（EMA、`skeleton_smoothing`）は表示専用で、操作系のフィルタとは独立。表示だけ滑らかにしたいときはこちら、操作の遅延を変えるなら One Euro / stabilizer を触る。
+- **オーバーレイの手は生の写像で描かない**: 操作エリア→画面の写像は約4.7倍・縦横比も非等方なので、`hands_to_screen()` は手のひら長を `overlay_hand_size` px に正規化し、カーソル基準点が `last_screen_pos`（実カーソル）に重なるよう配置する。描かれた指先＝クリック位置、が守るべき不変条件。
+- **MediaPipe 1.0 では `mp.solutions.hands` が存在しない。** Tasks API（`mediapipe.tasks.python.vision.HandLandmarker`）＋ `models/hand_landmarker.task` を使う。
+- **日本語表示は `overlay.TextRenderer`（PIL）経由。** `cv2.putText` は日本語を描けない。1フレームにつきPIL変換は1回にまとめる（`render_hud` の `items` に集約）。
+- **`print` する日本語は cp932 で表せる文字にする**（コンソールがcp932のため）。絵文字や `➡` などは化ける。
+- `CameraStream.read(last_id)` は新しいフレームが無ければ `(last_id, None)` を返す。同じフレームを二度処理しない前提でスクロール/ズームの差分を計算している。
+
+### 環境の注意
+
+- `mediapipe` は `opencv-contrib-python` を依存で入れるため、`opencv-python` / `opencv-python-headless` と同居する。`cv2` は最後にインストールされた方に解決され、headless だと `imshow` が無い。プレビューが出なくなったら `pip install --force-reinstall opencv-python`。
+- 実効フレームレートはカメラ側で決まることが多い（暗いと露光延長で半減）。検出自体は約18〜19ms/フレーム。
+
+## ドキュメント整理のルール
+
+- 調査メモや手順書などのMarkdownドキュメントを新規作成・保存する際は、[okf_summary.md](okf_summary.md) にまとめた Open Knowledge Format（OKF）v0.2 に従う。要点: 1ファイル＝1コンセプト、先頭にYAMLフロントマター（`type` 必須。`title` / `description` / `tags` / `generated`(`by`,`at`) / `status` / `stale_after` を推奨）、コンセプト間はMarkdownリンクで関連付け。未知の `type` や欠落フィールドがあっても読み込みを拒否しない。
+- プランモードでプランを作成したら `plan.md` として保存する。
+- [CLAUDE.template.md](CLAUDE.template.md) は新規プロジェクト用の雛形であり、このリポジトリの指示ではない。
