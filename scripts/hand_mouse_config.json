@@ -32,6 +32,7 @@
   "lock_pinch_on": 0.55,
   "lock_pinch_off": 0.75,
   "lock_hold_sec": 1.5,
+  "lock_rearm_distance": 0.6,
   "lock_finger_reach": 0.6,
   "lock_index_ratio": 1.0,
   "lock_drag_sec": 0.0,

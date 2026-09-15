@@ -687,6 +687,10 @@ class HandMouseApp:
                            f"（伸び {h0.reach_ratio(G.MIDDLE_TIP, G.MIDDLE_PIP):.2f}）"
                            f" / 薬指 {h0.pinch_to(G.RING_TIP):.2f}"
                            f"（伸び {h0.reach_ratio(G.RING_TIP, G.RING_PIP):.2f}）")
+                    if state.lock_tip is not None:
+                        dbg += " / 固定: 中"
+                    elif state.lock_block:
+                        dbg += f" / 固定NG: {state.lock_block}"
                     hint = f"{hint}  {dbg}" if hint else dbg
                     if now - self._debug_printed > 1.0:
                         self._debug_printed = now

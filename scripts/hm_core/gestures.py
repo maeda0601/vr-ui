@@ -194,6 +194,7 @@ class GestureState:
     arming: bool = False          # 親指が近づいていてカーソル固定中（クリック準備）
     lock_tip: int = None          # 固定ジェスチャーでつまんでいる指先（描画用。中指ピンチ固定のとき）
     lock_drag: bool = False       # 固定を続けてドラッグに移行した（本体側が描画用に立てる）
+    lock_block: str = ""          # 固定が始まらない理由（--debug 表示用。空なら固定可）
     lock_held_sec: float = 0.0    # 固定の継続時間（本体側が描画用に入れる）
     near_edge: bool = False       # 手のひらがカメラ映像の端に近い（検出が不安定になる）
     edge_factor: float = 0.0      # 端への近さ（0=十分内側, 1=端に接触）。安定化の強さに使う
@@ -341,13 +342,19 @@ class GestureRecognizer:
                 # 固定の開始: 親指が中指に十分近く、人差し指より中指に近いとき
                 # （親指を人差し指に付けただけで中指にも近づくため）。
                 # 前回の固定が切れた後は、親指を一度離してからでないと始めない
-                start = (self._lock_rearmed
-                         and d_middle < self.cfg.lock_pinch_on
-                         and d_middle < d_index * self.cfg.lock_index_ratio
-                         and primary._extended(MIDDLE_TIP, MIDDLE_PIP,
-                                               ratio=self.cfg.lock_finger_reach)
-                         and not right_on)
-                if start:
+                reasons = []
+                if not self._lock_rearmed:
+                    reasons.append("親指を一度離す")
+                if d_middle >= self.cfg.lock_pinch_on:
+                    reasons.append(f"中指の距離 {d_middle:.2f}≥{self.cfg.lock_pinch_on}")
+                if d_middle >= d_index * self.cfg.lock_index_ratio:
+                    reasons.append("人差し指の方が近い")
+                if not primary._extended(MIDDLE_TIP, MIDDLE_PIP, ratio=self.cfg.lock_finger_reach):
+                    reasons.append("中指を握り込んでいる")
+                if right_on:
+                    reasons.append("右クリック中")
+                state.lock_block = "・".join(reasons)
+                if not reasons:
                     self._lock_on = True
                     self._lock_started_at = self._now
                     self._lock_rearmed = False
@@ -359,7 +366,7 @@ class GestureRecognizer:
                 # 従来どおり: つまんでいる間だけ（距離のヒステリシスで維持）
                 if d_middle >= self.cfg.lock_pinch_off or right_on:
                     self._lock_on = False
-            if not self._lock_on and d_middle >= self.cfg.lock_pinch_off:
+            if not self._lock_on and d_middle >= self.cfg.lock_rearm_distance:
                 self._lock_rearmed = True
             # 離した後も余韻の間は固定位置を保つ（その間の右／左クリックを受け付ける）
             if self._lock_on:
