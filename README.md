@@ -256,9 +256,14 @@ scripts/
     filters.py           One Euro Filter（手ブレ抑制）
     gestures.py          ランドマーク→ジェスチャー判定
     hotkeys.py           グローバルホットキー（安全装置）
+    single_instance.py   二重起動の防止
     mouse.py             Windows API経由のマウス／キーボード操作
     overlay_window.py    デスクトップ透過オーバーレイ（手の骨格表示）
     overlay.py           カメラプレビューのHUD描画（日本語対応）
 models/
   hand_landmarker.task   MediaPipeの検出モデル
 ```
+
+## ライセンス
+
+[MIT License](LICENSE) — 自由に利用・改変・再配布できます。
