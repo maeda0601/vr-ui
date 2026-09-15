@@ -614,7 +614,7 @@ class HandMouseApp:
                     self._ignored_since_first = 0.0
                 ignored_hands = [h for h in hands if h not in active_hands]
 
-                state = self.recognizer.update(active_hands)
+                state = self.recognizer.update(active_hands, now)
                 self.process(state, now, dt)
 
                 # 画面上部の案内文（プレビュー・オーバーレイ共通）

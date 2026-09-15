@@ -2,6 +2,7 @@
 """手のランドマークからジェスチャーを判定する。"""
 
 import math
+import time
 from dataclasses import dataclass, field
 
 # MediaPipeの手のランドマーク番号
@@ -205,7 +206,8 @@ class GestureRecognizer:
         self._left_pending = 0    # ピンチ条件を満たした連続フレーム数（確定待ち）
         self._right_pending = 0
         self._lock_on = False     # 中指ピンチによる位置固定（freeze_gesture=middle）
-        self._lock_grace = 0      # 固定を離した後の余韻（残りフレーム数）
+        self._lock_released_at = None   # 固定を離した時刻（余韻の判定用）
+        self._now = 0.0
 
     def reset(self):
         self._left_on = False
@@ -215,11 +217,14 @@ class GestureRecognizer:
         self._left_pending = 0
         self._right_pending = 0
         self._lock_on = False
-        self._lock_grace = 0
+        self._lock_released_at = None
 
     def _lock_active(self):
-        """固定中、または固定を離した直後の余韻の中か。"""
-        return self._lock_on or self._lock_grace > 0
+        """固定中、または固定を離した直後の余韻（lock_grace_sec）の中か。"""
+        if self._lock_on:
+            return True
+        return (self._lock_released_at is not None
+                and self._now - self._lock_released_at < self.cfg.lock_grace_sec)
 
     def _middle_lock_enabled(self):
         """中指ピンチ固定が有効か（右クリックの指と衝突する設定なら無効）。"""
@@ -265,8 +270,9 @@ class GestureRecognizer:
             return value < self.cfg.pinch_off
         return value < self.cfg.pinch_on
 
-    def update(self, hands):
-        """手のリスト（Hand）からGestureStateを返す。"""
+    def update(self, hands, now=None):
+        """手のリスト（Hand）からGestureStateを返す。now は時刻[秒]（省略時は現在時刻）。"""
+        self._now = time.monotonic() if now is None else now
         if not hands:
             self.reset()
             return GestureState(mode=MODE_IDLE)
@@ -320,6 +326,7 @@ class GestureRecognizer:
         # 中指ピンチ固定: 親指＋中指をつまんでいる間だけ「固定」とみなす
         if middle_lock:
             d_middle = primary.pinch_to(MIDDLE_TIP)
+            lock_was_on = self._lock_on
             thresh = self.cfg.lock_pinch_off if self._lock_on else self.cfg.lock_pinch_on
             lock = (d_middle < thresh
                     and primary._extended(MIDDLE_TIP, MIDDLE_PIP, ratio=self.cfg.lock_finger_reach)
@@ -331,14 +338,14 @@ class GestureRecognizer:
             self._lock_on = lock
             # 離した後も余韻の間は固定位置を保つ（その間の右／左クリックを受け付ける）
             if self._lock_on:
-                self._lock_grace = self.cfg.lock_grace_frames
-            elif self._lock_grace > 0:
-                self._lock_grace -= 1
+                self._lock_released_at = None
+            elif lock_was_on:
+                self._lock_released_at = self._now
             self._arm_on = self._lock_active()
             state.lock_tip = MIDDLE_TIP if self._lock_on else None
         else:
             self._lock_on = False
-            self._lock_grace = 0
+            self._lock_released_at = None
 
         # 人差し指を握り込んでいるとき（グー）は左ピンチとみなさない。
         # 未成立のうちは「親指が離れた状態から近づいてきた」（middle固定では固定中）ことも要求する
