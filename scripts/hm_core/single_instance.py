@@ -14,15 +14,19 @@ kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
 ERROR_ALREADY_EXISTS = 183
+SYNCHRONIZE = 0x00100000
 MB_ICONINFORMATION = 0x00000040
 MB_SETFOREGROUND = 0x00010000
 MB_TOPMOST = 0x00040000
 
 # ログオンセッション内で一意な名前。別ユーザーの起動は邪魔しない
-MUTEX_NAME = "Local\vr-ui.hand_mouse.single_instance"
+# （"Local\" は名前空間の区切り。バックスラッシュはこの1個だけ使える）
+MUTEX_NAME = "Local\\vr-ui.hand_mouse.single_instance"
 
 kernel32.CreateMutexW.argtypes = (wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR)
 kernel32.CreateMutexW.restype = wintypes.HANDLE
+kernel32.OpenMutexW.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR)
+kernel32.OpenMutexW.restype = wintypes.HANDLE
 kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
 user32.MessageBoxW.argtypes = (wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT)
 
@@ -47,6 +51,19 @@ class SingleInstance:
         if self.handle:
             kernel32.CloseHandle(self.handle)
             self.handle = None
+
+
+def is_running(name=MUTEX_NAME):
+    """本体アプリが動作中かを調べる（ミューテックスは取得しない）。
+
+    設定画面が「保存すれば即反映されるか、次回起動時に反映されるか」を
+    伝えるために使う。取得しないので、この呼び出しが本体の起動を妨げることはない。
+    """
+    handle = kernel32.OpenMutexW(SYNCHRONIZE, False, name)
+    if not handle:
+        return False
+    kernel32.CloseHandle(handle)
+    return True
 
 
 def notify_already_running(show_dialog):

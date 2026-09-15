@@ -26,6 +26,7 @@ import argparse
 import math
 import sys
 import time
+from dataclasses import fields
 from pathlib import Path
 
 import cv2
@@ -43,6 +44,7 @@ from hm_core.hotkeys import HotkeyManager              # noqa: E402
 from hm_core.mouse import MouseController, enable_dpi_awareness  # noqa: E402
 from hm_core.overlay import TextRenderer, render_hud   # noqa: E402
 from hm_core.overlay_window import HandOverlay         # noqa: E402
+from hm_core.settings_schema import RESTART_REQUIRED   # noqa: E402
 from hm_core.single_instance import (                  # noqa: E402
     SingleInstance, notify_already_running)
 
@@ -59,6 +61,8 @@ DISPLAY_MODES = ("overlay", "preview", "none")
 
 # ドラッグ開始時のカーソル飛びを吸収するオフセットの減衰時定数[秒]
 OFFSET_DECAY_TAU = 0.12
+# 設定ファイルの更新を確認する間隔[秒]（設定画面で保存したら読み直すため）
+CONFIG_POLL_SEC = 1.0
 
 
 def clamp01(v):
@@ -106,6 +110,10 @@ class HandMouseApp:
         self._ignored_since_first = 0.0   # 無視している手が見え始めた時刻（案内表示用）
         self._ignored_notice_shown = False
         self.config_path = None           # 設定の保存先（左右入れ替えを永続化するため）
+        self.config_text = None           # 最後に読んだ設定ファイルの中身（変わったら読み直す）
+        self.config_check_at = 0.0        # 次に更新を確認する時刻
+        self.restart_pending = set()      # 再起動待ちの項目（毎回知らせないため覚えておく）
+        self.overlay = None               # 透過オーバーレイ（設定の反映で触る）
         self._debug_printed = 0.0         # 判定値をコンソールに出した時刻
         self.last_click_at = None         # 直前の左クリック時刻（ダブルクリック表示用）
         self.status_text = ""
@@ -155,6 +163,75 @@ class HandMouseApp:
         self.offset = [0.0, 0.0]
         self.notify("マウス操作を有効にしました" if value else "マウス操作を無効にしました")
 
+    # --- 設定の読み直し（設定画面で保存されたら反映する）-----------------
+    def _read_config_text(self):
+        """設定ファイルの中身。更新時刻ではなく中身で比べる。
+
+        Windowsの更新時刻は約15msの粒度しかなく、続けて2回保存すると同じ値になる。
+        設定ファイルは数KBなので、1秒に1回読み直しても負荷にならない。
+        """
+        if not self.config_path:
+            return None
+        try:
+            return Path(self.config_path).read_text(encoding="utf-8")
+        except OSError:
+            return None
+
+    def note_config_saved(self):
+        """自分で保存したときは、その内容を読み直さないよう控えておく。"""
+        self.config_text = self._read_config_text()
+
+    def reload_config_if_changed(self, now):
+        """設定ファイルが書き換わっていたら読み直して、今の動作に反映する。"""
+        if not self.config_path or now < self.config_check_at:
+            return
+        self.config_check_at = now + CONFIG_POLL_SEC
+        text = self._read_config_text()
+        if text is None or text == self.config_text:
+            return
+        self.config_text = text
+
+        changed, restart = self.apply_config(Config.load(self.config_path))
+        # 再起動が要る項目は反映しないので差分が残り続ける。知らせるのは増えた分だけ
+        fresh = [n for n in restart if n not in self.restart_pending]
+        self.restart_pending = set(restart)
+        if not changed and not fresh:
+            return
+        message = f"設定を読み直しました（{changed}項目）"
+        if fresh:
+            message += f" ※{'、'.join(fresh)} は再起動後に反映されます"
+        self.notify(message, 4.0)
+
+    def apply_config(self, new_cfg):
+        """新しい設定を今の動作へ入れる。戻り値は (反映した数, 再起動が要る項目名)。
+
+        self.cfg は recognizer など他のオブジェクトからも参照されているので、
+        差し替えずに中身だけ書き換える。起動時にしか読まない項目（カメラ番号や
+        表示方法）は、動作中に変えると辻褄が合わなくなるので入れない。
+        """
+        changed = 0
+        restart = []
+        for f in fields(Config):
+            old = getattr(self.cfg, f.name)
+            new = getattr(new_cfg, f.name)
+            if old == new:
+                continue
+            if f.name in RESTART_REQUIRED:
+                restart.append(f.name)
+                continue
+            setattr(self.cfg, f.name, new)
+            changed += 1
+        if not changed:
+            return 0, restart
+
+        # 起動時に値を写して持っているものは、ここで追随させる
+        self.mouse.margin = int(self.cfg.screen_margin_px)
+        self.filter.set_params(beta=self.cfg.filter_beta,
+                               d_cutoff=self.cfg.filter_d_cutoff)
+        if self.overlay is not None:
+            self.overlay.alpha = max(0.1, min(1.0, float(self.cfg.overlay_alpha)))
+        return changed, restart
+
     def toggle_swap_handedness(self):
         """左右判定を入れ替えて設定ファイルに保存する（Ctrl+Alt+S）。"""
         self.cfg.swap_handedness = not self.cfg.swap_handedness
@@ -163,6 +240,7 @@ class HandMouseApp:
         self._ignored_notice_shown = False
         if self.config_path:
             self.cfg.save(self.config_path)
+            self.note_config_saved()      # 自分の保存で読み直しが走らないように
         self.notify("左右判定を入れ替えました（swap_handedness="
                     f"{'true' if self.cfg.swap_handedness else 'false'}、設定に保存）", 3.0)
 
@@ -614,6 +692,8 @@ class HandMouseApp:
         elif display == "overlay":
             overlay = HandOverlay(self.mouse.screen_w, self.mouse.screen_h,
                                   self.cfg.overlay_alpha)
+        self.overlay = overlay
+        self.note_config_saved()   # 起動時点の更新時刻を基準にする
 
         print(f"画面解像度: {self.mouse.screen_w}x{self.mouse.screen_h} / 表示: {display}")
         print("Ctrl+Alt+H:有効切替 / Ctrl+Alt+R:リセット / Ctrl+Alt+S:左右判定の入れ替え / "
@@ -650,6 +730,7 @@ class HandMouseApp:
                 dt = max(now - last_time, 1e-3)
                 last_time = now
                 self.fps = self.fps * 0.9 + (1.0 / dt) * 0.1
+                self.reload_config_if_changed(now)
 
                 # 単調増加するタイムスタンプが必要
                 timestamp_ms = max(int(now * 1000), last_timestamp_ms + 1)

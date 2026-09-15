@@ -74,5 +74,12 @@ class Point2DFilter:
         self._fx.min_cutoff = value
         self._fy.min_cutoff = value
 
+    def set_params(self, beta=None, d_cutoff=None):
+        """設定を変えたときに、作り直さずに係数だけ入れ替える。"""
+        if beta is not None:
+            self._fx.beta = self._fy.beta = max(0.0, float(beta))
+        if d_cutoff is not None:
+            self._fx.d_cutoff = self._fy.d_cutoff = max(0.01, float(d_cutoff))
+
     def __call__(self, x, y, t):
         return self._fx(x, t), self._fy(y, t)
