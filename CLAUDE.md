@@ -78,6 +78,10 @@ ZOOM（両手ともピンチ）→ LEFT（親指+人差し指）→ RIGHT（親�
 - `mediapipe` は `opencv-contrib-python` を依存で入れるため、`opencv-python` / `opencv-python-headless` と同居する。`cv2` は最後にインストールされた方に解決され、headless だと `imshow` が無い。プレビューが出なくなったら `pip install --force-reinstall opencv-python`。
 - 実効フレームレートはカメラ側で決まることが多い（暗いと露光延長で半減）。検出自体は約18〜19ms/フレーム。
 
+## 自動コミット
+
+`.claude/settings.json` の Stop フックが各ターン終了時に `.claude/hooks/auto-commit.sh` を実行し、作業ツリーに変更があれば `git add -A` → コミットする（メッセージは「自動コミット: 日時（Nファイル）」）。ユーザーの希望による運用なので、途中状態でもコミットされる前提でよい。意味のある単位でまとめたいときは、ターンの終わりに自分で説明的なメッセージでコミットすれば、フックは何もしない。
+
 ## ドキュメント整理のルール
 
 - 調査メモや手順書などのMarkdownドキュメントを新規作成・保存する際は、[okf_summary.md](okf_summary.md) にまとめた Open Knowledge Format（OKF）v0.2 に従う。要点: 1ファイル＝1コンセプト、先頭にYAMLフロントマター（`type` 必須。`title` / `description` / `tags` / `generated`(`by`,`at`) / `status` / `stale_after` を推奨）、コンセプト間はMarkdownリンクで関連付け。未知の `type` や欠落フィールドがあっても読み込みを拒否しない。
