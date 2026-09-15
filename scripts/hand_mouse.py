@@ -94,6 +94,8 @@ class HandMouseApp:
         self.arm_suppressed = False   # 固定を自動解除した後、指が離れるまで再固定しない
         self.skeleton_prev = []       # オーバーレイ骨格の平滑化用（手ごとの前フレーム座標）
         self.noise_gain = 1.0         # 状況に応じた安定化の倍率（端・手の大きさで増える）
+        self._single_allowed = True   # 手が1つのときの採用状態（左右判定のちらつき対策）
+        self._allow_streak = 0
         self.status_text = ""
         self.status_until = 0.0
 
@@ -167,6 +169,38 @@ class HandMouseApp:
         if clamp:
             ax, ay = clamp01(ax), clamp01(ay)
         return ax * (self.mouse.screen_w - 1), ay * (self.mouse.screen_h - 1)
+
+    def hand_allowed(self, hand):
+        """設定 use_hand に基づき、この手を操作に使うか（1フレームの判定）。
+
+        MediaPipeの左右判定は鏡像入力を前提にしており、本アプリは検出前に
+        フレームを鏡像化しているので、そのまま実際の左右に対応する。
+        ラベルが無い手や信頼度の低い手（グーなど）は無視せず使う。
+        """
+        use = self.cfg.use_hand
+        if use == "both" or not hand.handedness:
+            return True
+        if hand.handedness_score < self.cfg.handedness_min_score:
+            return True
+        label = hand.handedness.lower()
+        if self.cfg.swap_handedness:
+            label = "left" if label == "right" else "right"
+        return label == use
+
+    def select_hands(self, hands):
+        """操作に使う手を選ぶ。手が1つのときは判定のちらつきを連続フレームで吸収する。"""
+        if len(hands) != 1:
+            self._allow_streak = 0
+            return [h for h in hands if self.hand_allowed(h)]
+        desired = self.hand_allowed(hands[0])
+        if desired == self._single_allowed:
+            self._allow_streak = 0
+        else:
+            self._allow_streak += 1
+            if self._allow_streak >= self.cfg.handedness_switch_frames:
+                self._single_allowed = desired
+                self._allow_streak = 0
+        return hands if self._single_allowed else []
 
     def hands_to_screen(self, hands, state):
         """オーバーレイ描画用に、各手の21点を画面座標へ変換する。
@@ -500,12 +534,17 @@ class HandMouseApp:
                 result = landmarker.detect_for_video(mp_image, timestamp_ms)
                 hands = []
                 for i, landmarks in enumerate(result.hand_landmarks):
-                    label = ""
+                    label, score = "", 1.0
                     if i < len(result.handedness) and result.handedness[i]:
                         label = result.handedness[i][0].category_name
-                    hands.append(G.Hand(landmarks, label))
+                        score = result.handedness[i][0].score
+                    hands.append(G.Hand(landmarks, label, score))
 
-                state = self.recognizer.update(hands)
+                # 設定で使わない手（既定では左手）は操作にも描画にも使わない
+                active_hands = self.select_hands(hands)
+                ignored_only = bool(hands) and not active_hands
+
+                state = self.recognizer.update(active_hands)
                 self.process(state, now, dt)
 
                 status = self.status_text if now < self.status_until else ""
@@ -519,10 +558,21 @@ class HandMouseApp:
                 elif overlay is not None:
                     if status:
                         hint = status
+                    elif self.fist_since is not None and not self.fist_consumed:
+                        # 保持時間が長いので、あと何秒かを見せる
+                        held = now - self.fist_since
+                        hint = f"グー保持中 {held:.1f} / {self.cfg.fist_toggle_sec:.1f} 秒"
+                    elif ignored_only:
+                        hint = f"{'右' if self.cfg.use_hand == 'right' else '左'}手だけを使います"
                     elif state.near_edge:
                         hint = "手がカメラの端に近いです"
+                    elif self.enabled:
+                        hint = ""
+                    elif not state.hands:
+                        # 閉じた手は検出されにくいので、まず開いた手を見せてもらう
+                        hint = "手を開いてカメラに見せてください"
                     else:
-                        hint = "" if self.enabled else "Ctrl+Alt+H で開始"
+                        hint = "グーを3秒保持 または Ctrl+Alt+H で開始"
                     overlay.render(self.hands_to_screen(state.hands, state),
                                    self.last_screen_pos, state, self.enabled, hint)
                     overlay.update()

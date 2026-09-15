@@ -47,6 +47,11 @@ CameraStream(別スレッド, 最新フレームのみ保持)
 - 骨格の画面座標は `HandMouseApp.hands_to_screen()` が `map_to_screen(clamp=False)` で作る。カーソルと違ってクランプしないので、手が画面端から切れて見える。
 - DIB はウィンドウサイズが変わったときだけ作り直す（サイズは `SIZE_STEP` 単位に丸める）。`overlay_alpha` は画像全体を `cv2.convertScaleAbs` で一律に薄める。
 
+### 使う手の選別（`HandMouseApp.hand_allowed`）
+
+`use_hand`（既定 `right`）に合わない手は recognizer に渡す前に落とす（描画もされない）。MediaPipe の handedness は鏡像入力前提で、本アプリは検出前に `cv2.flip` しているのでラベル＝実際の左右。環境で逆になるなら `swap_handedness`。ラベル無し・信頼度 `handedness_min_score` 未満の手は落とさない（グーは左右判定が不安定で、落とすと起動時の有効化ができなくなる）。手が1つのときは `select_hands()` が `handedness_switch_frames` 連続で同じ判定になるまで採用／無視を切り替えない。
+MediaPipe の手のひら検出は開いた手が前提で、閉じた手（グー）は追跡中でないと検出されにくい。無効中で手が無いときの案内は「手を開いてカメラに見せてください」にしている。
+
 ### モード判定の優先順位（`hm_core/gestures.py`）
 
 ZOOM（両手ともピンチ）→ LEFT（親指+人差し指）→ RIGHT（親指+`right_click_finger`、既定は薬指）→ FIST → SCROLL（チョキ）→ POINT → NONE。

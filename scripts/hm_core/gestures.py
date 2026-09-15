@@ -67,19 +67,21 @@ def _dist(a, b):
 class Hand:
     """1つの手のランドマークと、そこから導かれる特徴量。"""
 
-    def __init__(self, landmarks, handedness=""):
+    def __init__(self, landmarks, handedness="", handedness_score=1.0):
         # 正規化座標（0.0〜1.0）のリストとして保持する
         self.points = [(lm.x, lm.y) for lm in landmarks]
         self.handedness = handedness
+        self.handedness_score = float(handedness_score)
         # 手のひらの大きさ。指の開き具合に影響されない手首〜中指付け根を使う
         self.scale = max(_dist(self.points[WRIST], self.points[MIDDLE_MCP]), 1e-6)
 
     @classmethod
-    def from_points(cls, points, handedness=""):
+    def from_points(cls, points, handedness="", handedness_score=1.0):
         """(x, y) のリストから作る（平滑化済みの座標を渡すとき用）。"""
         hand = cls.__new__(cls)
         hand.points = list(points)
         hand.handedness = handedness
+        hand.handedness_score = float(handedness_score)
         hand.scale = max(_dist(hand.points[WRIST], hand.points[MIDDLE_MCP]), 1e-6)
         return hand
 

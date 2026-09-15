@@ -17,8 +17,9 @@ class Config:
     # --- 検出 ---
     model_path: str = "models/hand_landmarker.task"
     num_hands: int = 2
-    min_detection_confidence: float = 0.6
-    min_presence_confidence: float = 0.5
+    # グーのような閉じた手は検出されにくいので、しきい値は控えめにする
+    min_detection_confidence: float = 0.5
+    min_presence_confidence: float = 0.4
     min_tracking_confidence: float = 0.5
 
     # --- 操作エリア（カメラ画像の端は使わない。値は正規化座標の余白）---
@@ -56,6 +57,15 @@ class Config:
     # 固定してからこの秒数ピンチが成立しなければ解除
     arm_timeout_sec: float = 1.0
 
+    # --- 操作に使う手: right / left / both（both 以外では両手ズームは使えない）---
+    use_hand: str = "right"
+    # 左右の判定が逆になる環境（カメラが鏡像でない等）では true にする
+    swap_handedness: bool = False
+    # 左右判定の信頼度がこれ未満なら「不明」として無視しない（グーは判定が不安定）
+    handedness_min_score: float = 0.8
+    # 手が1つのとき、採用／無視を切り替えるまでに必要な連続フレーム数（判定のちらつき対策）
+    handedness_switch_frames: int = 6
+
     # --- 右クリックに使う指（親指とつまむ指）: ring / middle / pinky ---
     right_click_finger: str = "ring"
 
@@ -74,7 +84,7 @@ class Config:
     zoom_dead_zone: float = 0.006
 
     # --- グー（握り拳）で有効/無効をトグルする保持時間[秒] ---
-    fist_toggle_sec: float = 0.8
+    fist_toggle_sec: float = 3.0
 
     # --- 安全マージン（画面端に張り付かせない）[px] ---
     screen_margin_px: int = 2
