@@ -68,5 +68,11 @@ class Point2DFilter:
         self._fx.reset()
         self._fy.reset()
 
+    def set_min_cutoff(self, value):
+        """平滑化の強さを動的に変える（小さいほど滑らか）。"""
+        value = max(0.05, float(value))
+        self._fx.min_cutoff = value
+        self._fy.min_cutoff = value
+
     def __call__(self, x, y, t):
         return self._fx(x, t), self._fy(y, t)

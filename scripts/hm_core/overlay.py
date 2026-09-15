@@ -6,8 +6,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .gestures import (HAND_CONNECTIONS, INDEX_TIP, MIDDLE_TIP, MODE_LABELS,
-                       MODE_LEFT, MODE_RIGHT, MODE_SCROLL, MODE_ZOOM, THUMB_TIP)
+from .gestures import (HAND_CONNECTIONS, INDEX_TIP, MODE_LABELS, MODE_LEFT,
+                       MODE_RIGHT, MODE_ZOOM, RING_TIP, THUMB_TIP)
 
 # 日本語フォントの候補（Windows標準）
 _FONT_CANDIDATES = (
@@ -77,9 +77,9 @@ def draw_active_area(frame, cfg):
     """操作エリア（この矩形が画面全体に対応する）を描く。"""
     h, w = frame.shape[:2]
     x0 = int(cfg.active_margin_x * w)
-    y0 = int(cfg.active_margin_y * h)
+    y0 = int(cfg.active_margin_top * h)
     x1 = int((1.0 - cfg.active_margin_x) * w)
-    y1 = int((1.0 - cfg.active_margin_y) * h)
+    y1 = int((1.0 - cfg.active_margin_bottom) * h)
     cv2.rectangle(frame, (x0, y0), (x1, y1), COL_AREA, 1, cv2.LINE_AA)
     # 四隅だけ太くしてVRのプレイエリアらしく見せる
     for cx, cy, dx, dy in ((x0, y0, 1, 1), (x1, y0, -1, 1),
@@ -89,7 +89,7 @@ def draw_active_area(frame, cfg):
     return (x0, y0, x1, y1)
 
 
-def draw_hand(frame, hand, highlight_mode=None):
+def draw_hand(frame, hand, highlight_mode=None, right_tip=RING_TIP):
     """手の骨格を描く。"""
     h, w = frame.shape[:2]
     pts = [(int(p[0] * w), int(p[1] * h)) for p in hand.points]
@@ -105,7 +105,7 @@ def draw_hand(frame, hand, highlight_mode=None):
     if highlight_mode == MODE_LEFT:
         cv2.line(frame, pts[THUMB_TIP], pts[INDEX_TIP], COL_ON, 3, cv2.LINE_AA)
     elif highlight_mode == MODE_RIGHT:
-        cv2.line(frame, pts[THUMB_TIP], pts[MIDDLE_TIP], COL_OFF, 3, cv2.LINE_AA)
+        cv2.line(frame, pts[THUMB_TIP], pts[right_tip], COL_OFF, 3, cv2.LINE_AA)
 
     # カーソル位置になる人差し指先を強調
     cv2.circle(frame, pts[INDEX_TIP], 12, COL_TIP, 2, cv2.LINE_AA)
@@ -145,7 +145,7 @@ def render_hud(frame, renderer, cfg, state, enabled, fps, status_text=""):
 
     draw_active_area(frame, cfg)
     for hand in state.hands:
-        draw_hand(frame, hand, state.mode)
+        draw_hand(frame, hand, state.mode, state.right_tip)
     if state.mode == MODE_ZOOM and len(state.hands) >= 2:
         draw_zoom_link(frame, state.hands)
 
@@ -170,7 +170,7 @@ def render_hud(frame, renderer, cfg, state, enabled, fps, status_text=""):
     # ピンチゲージ（左＝左クリック、右＝右クリック）
     if state.pinch_index is not None:
         _gauge(frame, 12, 62, 110, state.pinch_index, cfg.pinch_on, COL_ON)
-        _gauge(frame, 140, 62, 110, state.pinch_middle, cfg.pinch_on, COL_OFF)
+        _gauge(frame, 140, 62, 110, state.pinch_right, cfg.pinch_on, COL_OFF)
         items.append(("左", (126, 54), 14, COL_ON))
         items.append(("右", (254, 54), 14, COL_OFF))
 

@@ -22,8 +22,19 @@ class Config:
     min_tracking_confidence: float = 0.5
 
     # --- 操作エリア（カメラ画像の端は使わない。値は正規化座標の余白）---
+    # 上下は非対称にする。基準点（手のひら中心）より下に手首があるため、下の余白を
+    # 大きく取らないと画面の一番下を狙うときに手がフレームから切れて検出が不安定になる
     active_margin_x: float = 0.18
-    active_margin_y: float = 0.14
+    active_margin_top: float = 0.10
+    active_margin_bottom: float = 0.32
+    # 手のひらの点がこの距離までフレーム端に近づいたら警告を表示する
+    edge_warn_margin: float = 0.06
+    # フレーム端からこの範囲に入ると、近いほど安定化を強める（0で無効）
+    edge_zone: float = 0.15
+    # 端に完全に寄ったときにスタビライザー半径を何倍増やすか（1.5 → 2.5倍）
+    edge_stabilizer_boost: float = 1.5
+    # 手のひら長（正規化座標）の基準。これより大きく映るほどブレが増えるので安定化を強める
+    reference_palm_size: float = 0.15
 
     # --- カーソル平滑化（One Euro Filter）---
     filter_min_cutoff: float = 0.6
@@ -44,6 +55,9 @@ class Config:
     arm_cancel_px: float = 30.0
     # 固定してからこの秒数ピンチが成立しなければ解除
     arm_timeout_sec: float = 1.0
+
+    # --- 右クリックに使う指（親指とつまむ指）: ring / middle / pinky ---
+    right_click_finger: str = "ring"
 
     # --- カーソルの基準点 ---
     #   palm      : 手のひら中心（既定。5点平均でブレが最小、ピンチしても動かない）

@@ -17,9 +17,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from .gestures import (HAND_CONNECTIONS, INDEX_TIP, MIDDLE_TIP, MODE_LABELS,
-                       MODE_LEFT, MODE_POINT, MODE_RIGHT, MODE_ZOOM, THUMB_TIP,
-                       WRIST)
+from .gestures import (HAND_CONNECTIONS, INDEX_TIP, MODE_LABELS, MODE_LEFT,
+                       MODE_POINT, MODE_RIGHT, MODE_ZOOM, THUMB_TIP, WRIST)
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
@@ -397,7 +396,7 @@ class HandOverlay:
             if enabled and state.mode == MODE_LEFT:
                 cv2.line(img, lp[THUMB_TIP], lp[INDEX_TIP], _bgra(*RGB_LEFT), 7, cv2.LINE_AA)
             elif enabled and state.mode == MODE_RIGHT:
-                cv2.line(img, lp[THUMB_TIP], lp[MIDDLE_TIP], _bgra(*RGB_RIGHT), 7, cv2.LINE_AA)
+                cv2.line(img, lp[THUMB_TIP], lp[state.right_tip], _bgra(*RGB_RIGHT), 7, cv2.LINE_AA)
 
         if state.mode == MODE_ZOOM and len(hands_px) >= 2:
             a = local(hands_px[0][INDEX_TIP])

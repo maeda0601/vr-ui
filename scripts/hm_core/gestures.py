@@ -20,6 +20,13 @@ PINKY_MCP = 17
 PINKY_PIP = 18
 PINKY_TIP = 20
 
+# 右クリックに使える指（設定名 → (指先, 第二関節)）
+RIGHT_CLICK_FINGERS = {
+    "middle": (MIDDLE_TIP, MIDDLE_PIP),
+    "ring": (RING_TIP, RING_PIP),
+    "pinky": (PINKY_TIP, PINKY_PIP),
+}
+
 # 骨格描画用の接続リスト
 HAND_CONNECTIONS = (
     (0, 1), (1, 2), (2, 3), (3, 4),
@@ -105,19 +112,17 @@ class Hand:
         """親指と人差し指の距離（手の大きさで正規化）。"""
         return _dist(self.points[THUMB_TIP], self.points[INDEX_TIP]) / self.scale
 
-    @property
-    def pinch_middle(self):
-        """親指と中指の距離（手の大きさで正規化）。"""
-        return _dist(self.points[THUMB_TIP], self.points[MIDDLE_TIP]) / self.scale
+    def pinch_to(self, tip):
+        """親指と指定した指先の距離（手の大きさで正規化）。"""
+        return _dist(self.points[THUMB_TIP], self.points[tip]) / self.scale
 
-    @property
-    def middle_reaching(self):
-        """中指が前に出ているか（握り込んでいないか）。
+    def finger_reaching(self, tip, pip):
+        """その指が前に出ているか（握り込んでいないか）。
 
-        人差し指を立てた姿勢では親指が曲げた中指に触れがちなので、
+        人差し指を立てた姿勢では親指が曲げた指に触れがちなので、
         右クリック判定はこれが真のときだけ有効にする。
         """
-        return self._extended(MIDDLE_TIP, MIDDLE_PIP, ratio=0.95)
+        return self._extended(tip, pip, ratio=0.95)
 
     def _curled(self, tip, pip, ratio=0.95):
         """指を握り込んでいるか（指先が第二関節より手首側に来ている）。"""
@@ -143,6 +148,18 @@ class Hand:
         """手の基準位置（中指付け根）。スクロール量の計算に使う。"""
         return self.points[MIDDLE_MCP]
 
+    def edge_distance(self):
+        """手のひらの点のうち、フレーム端に最も近いものの端までの距離（正規化）。"""
+        best = 1.0
+        for i in (WRIST, INDEX_MCP, MIDDLE_MCP, RING_MCP, PINKY_MCP):
+            x, y = self.points[i]
+            best = min(best, x, 1.0 - x, y, 1.0 - y)
+        return max(best, 0.0)
+
+    def near_frame_edge(self, margin):
+        """手のひらの点のどれかがフレーム端から margin 以内にあるか。"""
+        return self.edge_distance() < margin
+
     @property
     def palm_center(self):
         """手のひら中心（手首と4本指の付け根の平均）。
@@ -164,8 +181,11 @@ class GestureState:
     scroll_anchor: float = None   # スクロール判定用のy座標
     zoom_distance: float = None   # 両手の人差し指先の距離
     pinch_index: float = None     # 画面表示用
-    pinch_middle: float = None
+    pinch_right: float = None     # 右クリック用の指との距離（画面表示用）
+    right_tip: int = RING_TIP     # 右クリックに使う指先の番号（描画用）
     arming: bool = False          # 親指が近づいていてカーソル固定中（クリック準備）
+    near_edge: bool = False       # 手のひらがカメラ映像の端に近い（検出が不安定になる）
+    edge_factor: float = 0.0      # 端への近さ（0=十分内側, 1=端に接触）。安定化の強さに使う
 
 
 class GestureRecognizer:
@@ -217,11 +237,18 @@ class GestureRecognizer:
         hands = sorted(hands, key=lambda h: h.scale, reverse=True)
         primary = hands[0]
 
+        right_tip, right_pip = RIGHT_CLICK_FINGERS.get(
+            self.cfg.right_click_finger, RIGHT_CLICK_FINGERS["ring"])
         state = GestureState(
             hands=hands,
             pinch_index=primary.pinch_index,
-            pinch_middle=primary.pinch_middle,
+            pinch_right=primary.pinch_to(right_tip),
+            right_tip=right_tip,
+            near_edge=primary.near_frame_edge(self.cfg.edge_warn_margin),
         )
+        zone = self.cfg.edge_zone
+        if zone > 0:
+            state.edge_factor = max(0.0, min(1.0, 1.0 - primary.edge_distance() / zone))
 
         # 両手ともピンチしていれば、手の間隔でズーム
         if len(hands) >= 2:
@@ -235,13 +262,13 @@ class GestureRecognizer:
                 return state
 
         # ピンチ状態を更新（ヒステリシス）
-        # 中指ピンチは「人差し指より明確に近い」ときだけ採用し、
+        # 右クリックの指は「人差し指より明確に近い」ときだけ採用し、
         # 隣り合う指による左右クリックの取り違えを防ぐ
         d_index = primary.pinch_index
-        d_middle = primary.pinch_middle
-        right_on = (self._pinch_state(d_middle, self._right_on)
-                    and d_middle < d_index * 0.8
-                    and primary.middle_reaching)
+        d_right = state.pinch_right
+        right_on = (self._pinch_state(d_right, self._right_on)
+                    and d_right < d_index * 0.8
+                    and primary.finger_reaching(right_tip, right_pip))
         # 人差し指を握り込んでいるとき（グー）は左ピンチとみなさない
         left_on = (self._pinch_state(d_index, self._left_on) and not right_on
                    and not primary.index_curled)

@@ -93,6 +93,7 @@ class HandMouseApp:
         self.freeze_raw = None        # 固定開始時の生の写像位置（移動量の判定用）
         self.arm_suppressed = False   # 固定を自動解除した後、指が離れるまで再固定しない
         self.skeleton_prev = []       # オーバーレイ骨格の平滑化用（手ごとの前フレーム座標）
+        self.noise_gain = 1.0         # 状況に応じた安定化の倍率（端・手の大きさで増える）
         self.status_text = ""
         self.status_until = 0.0
 
@@ -160,9 +161,9 @@ class HandMouseApp:
         """
         cfg = self.cfg
         span_x = max(1e-6, 1.0 - 2.0 * cfg.active_margin_x)
-        span_y = max(1e-6, 1.0 - 2.0 * cfg.active_margin_y)
+        span_y = max(1e-6, 1.0 - cfg.active_margin_top - cfg.active_margin_bottom)
         ax = (nx - cfg.active_margin_x) / span_x
-        ay = (ny - cfg.active_margin_y) / span_y
+        ay = (ny - cfg.active_margin_top) / span_y
         if clamp:
             ax, ay = clamp01(ax), clamp01(ay)
         return ax * (self.mouse.screen_w - 1), ay * (self.mouse.screen_h - 1)
@@ -224,6 +225,23 @@ class HandMouseApp:
         return out
 
     # --- ジェスチャーの適用 -------------------------------------------
+    def update_noise_gain(self, state):
+        """状況に応じて安定化の強さを決める。
+
+        - フレーム端に近いほど（edge_factor）: MediaPipeの切り出し領域がはみ出して
+          ランドマークが荒れるので、不感帯を広げ平滑化を強める
+        - 手が大きく映るほど（scale / reference_palm_size）: ブレの絶対量が増えるので同様
+        """
+        cfg = self.cfg
+        gain = 1.0
+        if state.hands:
+            size_ratio = state.hands[0].scale / max(cfg.reference_palm_size, 1e-6)
+            # 小さく映るときに弱めることはしない（基準より大きいときだけ強める）
+            gain *= max(1.0, min(2.0, size_ratio))
+        gain *= 1.0 + cfg.edge_stabilizer_boost * state.edge_factor
+        self.noise_gain = gain
+        self.filter.set_min_cutoff(cfg.filter_min_cutoff * (1.0 - 0.6 * state.edge_factor))
+
     def apply_cursor(self, cursor, now, dt):
         """カーソル基準点を画面座標へ変換し、平滑化・安定化して移動する。"""
         raw_x, raw_y = self.map_to_screen(*cursor)
@@ -241,8 +259,9 @@ class HandMouseApp:
 
         現在のカーソルから半径R以内の揺れは無視し、外に出た分だけカーソルを
         引き寄せる。静止時のブレを消しつつ、大きく動かすときの遅れは半径分だけで済む。
+        半径は update_noise_gain() が状況に応じて増減させる。
         """
-        r = self.cfg.stabilizer_radius
+        r = self.cfg.stabilizer_radius * self.noise_gain
         if r <= 0 or self.last_screen_pos is None:
             return x, y
         cx, cy = self.last_screen_pos
@@ -324,6 +343,13 @@ class HandMouseApp:
         entered = mode != self.prev_mode
 
         self.handle_fist(mode, now)
+        self.update_noise_gain(state)
+
+        # 手を見失って復帰したときは、直前のカーソル位置から滑らかにつなぐ
+        # （フレーム端で検出が途切れるたびに生の位置へ飛ぶのを防ぐ）
+        if (entered and self.prev_mode in (G.MODE_IDLE, G.MODE_NONE)
+                and state.cursor is not None and self.last_screen_pos is not None):
+            self.reanchor(state.cursor)
 
         if mode != G.MODE_LEFT:
             self.mouse.release_left()
@@ -491,7 +517,12 @@ class HandMouseApp:
                         break
                     self.handle_keys()
                 elif overlay is not None:
-                    hint = status or ("" if self.enabled else "Ctrl+Alt+H で開始")
+                    if status:
+                        hint = status
+                    elif state.near_edge:
+                        hint = "手がカメラの端に近いです"
+                    else:
+                        hint = "" if self.enabled else "Ctrl+Alt+H で開始"
                     overlay.render(self.hands_to_screen(state.hands, state),
                                    self.last_screen_pos, state, self.enabled, hint)
                     overlay.update()
