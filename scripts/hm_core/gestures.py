@@ -215,6 +215,7 @@ class GestureRecognizer:
         self._lock_released_at = None   # 固定を離した時刻（余韻の判定用）
         self._lock_started_at = None    # 固定を始めた時刻（固定窓の判定用）
         self._lock_rearmed = True       # 親指が中指から一度離れて、次の固定を始められるか
+        self._lock_index_open = False   # 固定中に人差し指が親指から離れた（次に付けたらクリック）
         self._now = 0.0
 
     def reset(self):
@@ -228,6 +229,7 @@ class GestureRecognizer:
         self._lock_released_at = None
         self._lock_started_at = None
         self._lock_rearmed = True
+        self._lock_index_open = False
 
     def _lock_active(self):
         """固定中、または固定を離した直後の余韻（lock_grace_sec）の中か。"""
@@ -360,6 +362,8 @@ class GestureRecognizer:
                     self._lock_on = True
                     self._lock_started_at = self._now
                     self._lock_rearmed = False
+                    # 固定した瞬間に人差し指が親指に触れていれば、一度離すまでクリックしない
+                    self._lock_index_open = d_index >= self.cfg.lock_click_release
             elif hold > 0:
                 # 固定窓: 親指が離れても解除せず、一定時間で自動解除
                 if self._now - self._lock_started_at >= hold:
@@ -387,9 +391,13 @@ class GestureRecognizer:
                      and not primary.index_curled)
         if not self._left_on:
             if middle_lock:
-                # 固定中に人差し指も親指に付いたときだけ。親指が中指に付いただけの姿勢では
-                # 人差し指との距離が中指より明確に遠いので、その比で区別する
-                if not self._lock_active() or d_index > d_middle * 1.3:
+                # 固定中に「人差し指が一度離れてから親指に付いた」ときだけクリック。
+                # 親指が人差し指と中指の間に入る自然なつまみ方では距離で区別できないため、
+                # 人差し指の離れる→付く動きを条件にする
+                if self._lock_active() and d_index >= self.cfg.lock_click_release:
+                    self._lock_index_open = True
+                if (not self._lock_active() or not self._lock_index_open
+                        or d_index >= self.cfg.lock_click_on):
                     left_cond = False
             elif self.cfg.pinch_require_approach and not self._arm_on:
                 left_cond = False
@@ -398,6 +406,8 @@ class GestureRecognizer:
         if self._left_on and not left_on and not middle_lock:
             # 離した直後は、親指を一度離してからでないと再度クリックできない
             self._arm_on = False
+        if left_on and not self._left_on:
+            self._lock_index_open = False   # クリックしたら、次は人差し指を離してから
         self._left_on = left_on
         self._right_on = right_on
 
