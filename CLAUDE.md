@@ -87,6 +87,7 @@ ZOOM（両手ともピンチ）→ LEFT（親指+人差し指）→ RIGHT（親�
 
 - `run_hand_mouse.bat`: uv を探し（PATH に無ければ `%USERPROFILE%\.local\bin\uv.exe`）、初回は `uv sync` とモデル取得をしてから `uv run scripts\hand_mouse.py`。cp932 で保存する（cmd が読むため）。
 - `run_hand_mouse_silent.vbs`: コンソール無しで `.venv\Scripts\pythonw.exe` を直接起動（`sh.Run ..., 0`）。セットアップ未完なら bat を表示付きで実行。pythonw では `sys.stdout` が None なので `setup_logging_if_no_console()` が `logs/hand_mouse.log` へ付け替える（`print` は stdout が None でも例外にならないが、痕跡を残すため）。
+- **二重起動は `SingleInstance`（`hm_core/single_instance.py`、名前付きミューテックス）で防ぐ。** 2つ動くと後発はカメラを開けず（先のプロセスが握っている）ホットキーも `RegisterHotKey` に失敗するため、pythonw 起動では `Ctrl+Alt+Q` すら効かず終了手段が無くなり、オーバーレイの状態表示だけが画面に残る。`main()` は `enable_dpi_awareness()` の直後に取得を試み、取れなければ `notify_already_running()`（コンソール無しのときは `MessageBoxW`）を出して終了する。ミューテックスはプロセスが落ちればOSが回収するので残留しない。
 - Git Bash から bat を検証するときは `MSYS_NO_PATHCONV=1 cmd.exe /c "<絶対パス>.bat --help < nul"`（`/c` がパスに変換されて対話 cmd が起動する罠がある）。
 
 ## 自動コミット

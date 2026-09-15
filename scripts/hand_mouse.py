@@ -43,6 +43,8 @@ from hm_core.hotkeys import HotkeyManager              # noqa: E402
 from hm_core.mouse import MouseController, enable_dpi_awareness  # noqa: E402
 from hm_core.overlay import TextRenderer, render_hud   # noqa: E402
 from hm_core.overlay_window import HandOverlay         # noqa: E402
+from hm_core.single_instance import (                  # noqa: E402
+    SingleInstance, notify_already_running)
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "scripts" / "hand_mouse_config.json"
@@ -831,6 +833,14 @@ def main():
 
     enable_dpi_awareness()
 
+    # 二重起動するとカメラもホットキーも奪い合いになり、どちらも操作できなくなる
+    instance = SingleInstance()
+    if not instance.acquired:
+        notify_already_running(log_file is not None)
+        if log_file is not None:
+            log_file.close()
+        return 1
+
     try:
         app = HandMouseApp(cfg)
         app.config_path = args.config
@@ -844,6 +854,7 @@ def main():
         traceback.print_exc()
         return 1
     finally:
+        instance.release()
         if log_file is not None:
             log_file.close()
     return 0
