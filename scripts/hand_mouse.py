@@ -395,6 +395,25 @@ class HandMouseApp:
             self.fist_consumed = True
             self.set_enabled(not self.enabled)
 
+    def emit_left_click(self, now):
+        """左クリックを送る。直前のクリックから double_click_sec 以内ならダブルクリック扱い。
+
+        OSはダブルクリック時間（既定0.5秒）以内の2回クリックを自動でダブルクリックにする。
+        それを超えていた場合は、2回目でクリックを1回補い（2回目＋補い）がOS側で
+        ダブルクリックになるようにする。1回目のクリックは既に送っているので取り消せない。
+        """
+        window = self.cfg.double_click_sec
+        os_window = self.mouse.double_click_time_sec()
+        since = None if self.last_click_at is None else now - self.last_click_at
+        self.mouse.click_left()
+        if since is not None and since <= window:
+            if since > os_window * 0.8:
+                self.mouse.click_left()
+            self.notify("ダブルクリック", 1.0)
+            self.last_click_at = None
+        else:
+            self.last_click_at = now
+
     def handle_idle(self, mode, now):
         """手が一定時間見えなければ操作を無効にする（置き忘れ・離席時の安全装置）。"""
         if mode != G.MODE_IDLE:
@@ -504,14 +523,7 @@ class HandMouseApp:
                 if not self.frozen:
                     self.apply_cursor(state.cursor, now, dt)
                 if entered and self.enabled:
-                    self.mouse.click_left()
-                    # OSのダブルクリック時間内の2回目はWindows側でダブルクリックになる
-                    window = self.mouse.double_click_time_sec()
-                    if self.last_click_at is not None and now - self.last_click_at <= window:
-                        self.notify("ダブルクリック", 1.0)
-                        self.last_click_at = None
-                    else:
-                        self.last_click_at = now
+                    self.emit_left_click(now)
 
         elif mode == G.MODE_RIGHT:
             if entered:

@@ -77,7 +77,10 @@ class Config:
     # 固定中の左クリックは「人差し指が一度 lock_click_release 以上離れてから
     # lock_click_on 未満まで親指に近づいた」ときだけ（固定時から触れている人差し指では発火しない）
     lock_click_on: float = 0.25
-    lock_click_release: float = 0.35
+    lock_click_release: float = 0.30
+    # 固定中の2回タップをダブルクリックとみなす間隔[秒]。OSのダブルクリック時間（既定0.5秒）より
+    # 長い場合は、2回目のときにクリックを補ってOS側でも確実にダブルクリックにする
+    double_click_sec: float = 0.8
     lock_finger_reach: float = 0.60  # 中指の曲がりの許容（指先が第二関節×この値より遠ければ可）
     lock_index_ratio: float = 1.50   # 固定開始は「中指距離 < 人差し指距離×この値」のときだけ（人差し指は中指の隣なので余裕を持たせる）
     # 固定をこの秒数続けると左ボタンを押した状態になり、そのまま動かすとドラッグ／範囲選択
