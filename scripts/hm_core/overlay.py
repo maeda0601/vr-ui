@@ -155,8 +155,7 @@ def render_hud(frame, renderer, cfg, state, enabled, fps, status_text="", ignore
     """プレビュー画面にHUDを重ねて返す。"""
     h, w = frame.shape[:2]
 
-    if getattr(cfg, "mapping_mode", "absolute") == "absolute":
-        draw_active_area(frame, cfg, area)   # 相対モードでは操作エリアの枠は意味を持たない
+    draw_active_area(frame, cfg, area)
     for hand in ignored_hands:
         draw_ghost_hand(frame, hand)
     for hand in state.hands:

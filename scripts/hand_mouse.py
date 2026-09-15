@@ -94,8 +94,6 @@ class HandMouseApp:
         self.freeze_raw = None        # 固定開始時の生の写像位置（移動量の判定用）
         self.arm_suppressed = False   # 固定を自動解除した後、指が離れるまで再固定しない
         self.no_hand_since = None     # 手が見えなくなった時刻（一定時間で操作を無効にする）
-        self.rel_prev = None          # 相対移動: 前フレームの手の位置（カメラ画素、平滑化後）
-        self.rel_virtual = None       # 相対移動: 移動量を積算した仮想位置（不感帯で実カーソルを引く）
         self.palm_ema = None          # 映っている手のひら長の平滑値（操作エリアの自動調整用）
         self.lock_since = None        # 中指ピンチ固定の開始時刻（ドラッグ移行の判定用）
         self.lock_drag = False        # 固定を続けてドラッグ（左ボタン押下）に移行した
@@ -153,11 +151,6 @@ class HandMouseApp:
             self.mouse.release_all()
         self.filter.reset()
         self.offset = [0.0, 0.0]
-        self.rel_prev = None
-        if value and self.is_relative():
-            # 有効化した瞬間の実マウス位置から続ける
-            self.last_screen_pos = tuple(float(v) for v in self.mouse.get_position())
-            self.rel_virtual = self.last_screen_pos
         self.notify("マウス操作を有効にしました" if value else "マウス操作を無効にしました")
 
     def toggle_swap_handedness(self):
@@ -177,8 +170,6 @@ class HandMouseApp:
         self.mouse.release_all()
         self.offset = [0.0, 0.0]
         self.frozen = False
-        self.rel_prev = None
-        self.rel_virtual = None
         self.lock_since = None
         self.lock_drag = False
         self.prev_scroll_anchor = None
@@ -328,21 +319,8 @@ class HandMouseApp:
         self.noise_gain = gain
         self.filter.set_min_cutoff(cfg.filter_min_cutoff * (1.0 - 0.6 * state.edge_factor))
 
-    def is_relative(self):
-        return self.cfg.mapping_mode == "relative"
-
-    def raw_screen_point(self, cursor):
-        """固定中の移動量判定などに使う「生の位置」。相対モードでは画面座標の代わりに
-        カメラ画素×倍率のスケールで返す（距離の比較にしか使わない）。"""
-        if self.is_relative():
-            g = self.cfg.relative_gain
-            return cursor[0] * self.cfg.frame_width * g, cursor[1] * self.cfg.frame_height * g
-        return self.map_to_screen(*cursor)
-
     def apply_cursor(self, cursor, now, dt):
-        """カーソル基準点からカーソルを動かす（絶対／相対はここで分岐）。"""
-        if self.is_relative():
-            return self.apply_cursor_relative(cursor, now, dt)
+        """カーソル基準点を画面座標へ変換し、平滑化・安定化して移動する。"""
         raw_x, raw_y = self.map_to_screen(*cursor)
         pos_x = raw_x + self.offset[0]
         pos_y = raw_y + self.offset[1]
@@ -353,35 +331,6 @@ class HandMouseApp:
             self.mouse.move_to(sx, sy)
         return raw_x, raw_y
 
-    def apply_cursor_relative(self, cursor, now, dt):
-        """相対移動: 手の移動量（カメラ画素）× relative_gain だけカーソルを動かす。
-
-        手の位置は One Euro Filter で平滑化してから差分を取り、積算した仮想位置を
-        不感帯（stabilize）で追いかける。手を見失った／固定した後は rel_prev を
-        リセットしてあるので、復帰時に飛ばない（マウスを持ち上げて置き直す感覚）。
-        """
-        cfg = self.cfg
-        fx, fy = self.filter(cursor[0] * cfg.frame_width, cursor[1] * cfg.frame_height, now)
-        if self.last_screen_pos is None:
-            # 開始点は実際のマウス位置から
-            self.last_screen_pos = tuple(float(v) for v in self.mouse.get_position())
-        if self.rel_virtual is None:
-            self.rel_virtual = self.last_screen_pos
-        if self.rel_prev is None:
-            self.rel_prev = (fx, fy)
-            return self.last_screen_pos
-        dx = (fx - self.rel_prev[0]) * cfg.relative_gain
-        dy = (fy - self.rel_prev[1]) * cfg.relative_gain
-        self.rel_prev = (fx, fy)
-        vx = min(max(self.rel_virtual[0] + dx, 0.0), self.mouse.screen_w - 1.0)
-        vy = min(max(self.rel_virtual[1] + dy, 0.0), self.mouse.screen_h - 1.0)
-        self.rel_virtual = (vx, vy)
-        sx, sy = self.stabilize(vx, vy)
-        self.last_screen_pos = (sx, sy)
-        if self.enabled:
-            self.mouse.move_to(sx, sy)
-        return sx, sy
-
     def stabilize(self, x, y):
         """不感帯つきの追従（糸で引っ張るモデル）。
 
@@ -389,8 +338,7 @@ class HandMouseApp:
         引き寄せる。静止時のブレを消しつつ、大きく動かすときの遅れは半径分だけで済む。
         半径は update_noise_gain() が状況に応じて増減させる。
         """
-        base = self.cfg.relative_stabilizer_radius if self.is_relative() else self.cfg.stabilizer_radius
-        r = base * self.noise_gain
+        r = self.cfg.stabilizer_radius * self.noise_gain
         if r <= 0 or self.last_screen_pos is None:
             return x, y
         cx, cy = self.last_screen_pos
@@ -417,12 +365,6 @@ class HandMouseApp:
         ピンチ成立（指先→指の中点）や、カーソル固定の解除のときに呼ぶ。
         """
         if self.last_screen_pos is None:
-            return
-        if self.is_relative():
-            # 相対モード: 次のフレームから差分を取り直す（現在位置から続ける）
-            self.rel_prev = None
-            self.rel_virtual = self.last_screen_pos
-            self.filter.reset()
             return
         raw_x, raw_y = self.map_to_screen(*cursor_norm)
         self.offset[0] = self.last_screen_pos[0] - raw_x
@@ -570,7 +512,7 @@ class HandMouseApp:
             if want_freeze and self.frozen and state.lock_tip is None:
                 # 固定中に手が大きく動いた／時間切れなら、クリックではないとみなして解除
                 # （中指ピンチによる明示的な固定では解除しない。離せば解除される）
-                raw = self.raw_screen_point(state.cursor)
+                raw = self.map_to_screen(*state.cursor)
                 moved = math.hypot(raw[0] - self.freeze_raw[0], raw[1] - self.freeze_raw[1])
                 if moved > self.cfg.arm_cancel_px or now - self.freeze_since > self.cfg.arm_timeout_sec:
                     want_freeze = False
@@ -580,9 +522,7 @@ class HandMouseApp:
                     # 親指が近づいてきた瞬間にカーソルを固定し、ピンチ動作によるズレを防ぐ
                     self.frozen = True
                     self.freeze_since = now
-                    self.freeze_raw = self.raw_screen_point(state.cursor)
-                    if self.is_relative():
-                        self.rel_prev = None   # 固定中の手の動きは積算しない
+                    self.freeze_raw = self.map_to_screen(*state.cursor)
             else:
                 if self.frozen:
                     self.reanchor(state.cursor)
@@ -625,7 +565,6 @@ class HandMouseApp:
             # 手が無い／グー／待機のときはカーソルを動かさない
             self.frozen = False
             self.decay_offset(dt)
-            self.rel_prev = None   # 相対モード: 復帰後は差分を取り直す（飛ばない）
             if mode == G.MODE_IDLE:
                 self.filter.reset()
 
