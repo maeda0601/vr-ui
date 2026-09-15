@@ -73,10 +73,10 @@ class TextRenderer:
         return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
 
 
-def draw_active_area(frame, cfg):
+def draw_active_area(frame, cfg, area=None):
     """操作エリア（この矩形が画面全体に対応する）を描く。"""
     h, w = frame.shape[:2]
-    ax0, ay0, ax1, ay1 = cfg.active_area()
+    ax0, ay0, ax1, ay1 = area if area is not None else cfg.active_area()
     x0, y0, x1, y1 = int(ax0 * w), int(ay0 * h), int(ax1 * w), int(ay1 * h)
     cv2.rectangle(frame, (x0, y0), (x1, y1), COL_AREA, 1, cv2.LINE_AA)
     # 四隅だけ太くしてVRのプレイエリアらしく見せる
@@ -150,11 +150,12 @@ def draw_ghost_hand(frame, hand):
         cv2.circle(frame, p, 3, (160, 160, 160), -1, cv2.LINE_AA)
 
 
-def render_hud(frame, renderer, cfg, state, enabled, fps, status_text="", ignored_hands=()):
+def render_hud(frame, renderer, cfg, state, enabled, fps, status_text="", ignored_hands=(),
+               area=None):
     """プレビュー画面にHUDを重ねて返す。"""
     h, w = frame.shape[:2]
 
-    draw_active_area(frame, cfg)
+    draw_active_area(frame, cfg, area)
     for hand in ignored_hands:
         draw_ghost_hand(frame, hand)
     for hand in state.hands:

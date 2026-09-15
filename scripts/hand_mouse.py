@@ -94,6 +94,7 @@ class HandMouseApp:
         self.freeze_raw = None        # 固定開始時の生の写像位置（移動量の判定用）
         self.arm_suppressed = False   # 固定を自動解除した後、指が離れるまで再固定しない
         self.no_hand_since = None     # 手が見えなくなった時刻（一定時間で操作を無効にする）
+        self.palm_ema = None          # 映っている手のひら長の平滑値（操作エリアの自動調整用）
         self.lock_since = None        # 中指ピンチ固定の開始時刻（ドラッグ移行の判定用）
         self.lock_drag = False        # 固定を続けてドラッグ（左ボタン押下）に移行した
         self.skeleton_prev = []       # オーバーレイ骨格の平滑化用（手ごとの前フレーム座標）
@@ -183,12 +184,30 @@ class HandMouseApp:
         clamp=False にすると画面外へはみ出した座標もそのまま返す
         （オーバーレイで手が画面端から切れて見えるようにするため）。
         """
-        x0, y0, x1, y1 = self.cfg.active_area()
+        x0, y0, x1, y1 = self.current_area()
         ax = (nx - x0) / max(1e-6, x1 - x0)
         ay = (ny - y0) / max(1e-6, y1 - y0)
         if clamp:
             ax, ay = clamp01(ax), clamp01(ay)
         return ax * (self.mouse.screen_w - 1), ay * (self.mouse.screen_h - 1)
+
+    def current_area(self):
+        """いま使う操作エリア。手の大きさ（ゆっくり追従）で上端を自動調整する。"""
+        return self.cfg.active_area(self.palm_ema)
+
+    def update_palm_size(self, state, dt):
+        """映っている手のひら長をゆっくり平滑化して保持する（操作エリアの自動調整用）。
+
+        速く追従させると手の遠近でエリアが揺れてカーソルが動いてしまうので、時定数は長め。
+        """
+        if not state.hands:
+            return
+        size = state.hands[0].scale
+        if self.palm_ema is None:
+            self.palm_ema = size
+        else:
+            k = min(1.0, dt / 1.5)
+            self.palm_ema += (size - self.palm_ema) * k
 
     def hand_allowed(self, hand):
         """設定 use_hand に基づき、この手を操作に使うか（1フレームの判定）。
@@ -438,6 +457,7 @@ class HandMouseApp:
 
         self.handle_fist(mode, now)
         self.handle_idle(mode, now)
+        self.update_palm_size(state, dt)
         self.update_noise_gain(state)
 
         # 手を見失って復帰したときは、直前のカーソル位置から滑らかにつなぐ
@@ -678,7 +698,7 @@ class HandMouseApp:
                     hint = (f"{'右' if self.cfg.use_hand == 'right' else '左'}手だけを使います"
                             f"（{ignored_label}） Ctrl+Alt+S で左右入れ替え")
                 elif state.fingers_out:
-                    hint = "指先がカメラの外に出ています（手を中央寄りに）"
+                    hint = "指先がカメラの外です（手を下げるか、画面を手前に倒してカメラを下向きに）"
                 elif state.near_edge:
                     hint = "手がカメラの端に近いです"
                 elif (self.enabled and state.mode == G.MODE_IDLE
@@ -720,7 +740,8 @@ class HandMouseApp:
 
                 if use_preview:
                     view = render_hud(frame, self.renderer, self.cfg, state,
-                                      self.enabled, self.fps, hint, ignored_hands)
+                                      self.enabled, self.fps, hint, ignored_hands,
+                                      area=self.current_area())
                     cv2.imshow(WINDOW_NAME, view)
                     if cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
                         break

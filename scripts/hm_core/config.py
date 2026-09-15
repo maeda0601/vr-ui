@@ -37,6 +37,11 @@ class Config:
     min_margin_x: float = 0.05
     min_margin_top: float = 0.24
     min_margin_bottom: float = 0.25
+    # 上の余白を「映っている手の大きさ」から自動で決める（手のひら長 × finger_reach_factor ＋ pad）。
+    # 手が大きく映るほど指先が上にはみ出しやすいので、その分だけ上端を下げる
+    adaptive_top_margin: bool = True
+    finger_reach_factor: float = 1.6
+    adaptive_margin_pad: float = 0.04
     # 手のひらの点がこの距離までフレーム端に近づいたら警告を表示する
     edge_warn_margin: float = 0.06
     # フレーム端からこの範囲に入ると、近いほど安定化を強める（0で無効）
@@ -154,11 +159,13 @@ class Config:
     # カメラとの距離に関係なく一定サイズで描く。0にすると生の写像で描く
     overlay_hand_size: int = 70
 
-    def active_area(self):
+    def active_area(self, palm_size=None):
         """cursor_gain を反映した操作エリア (x0, y0, x1, y1) を正規化座標で返す。
 
         余白で決まる範囲を中心はそのままに 1/cursor_gain 倍に広げ（縮め）、
         フレーム端に寄り過ぎないよう各余白の最小値で止める。
+        palm_size（映っている手のひら長、正規化座標）を渡すと、指先がフレーム外に
+        出ない高さまで上端を下げる（adaptive_top_margin）。
         """
         gain = max(0.3, float(self.cursor_gain))
 
@@ -174,6 +181,10 @@ class Config:
                         self.min_margin_x, self.min_margin_x)
         y0, y1 = expand(self.active_margin_top, self.active_margin_bottom,
                         self.min_margin_top, self.min_margin_bottom)
+        if self.adaptive_top_margin and palm_size:
+            need = palm_size * self.finger_reach_factor + self.adaptive_margin_pad
+            # 上端を下げすぎてエリアが潰れないよう、高さは最低 0.15 残す
+            y0 = max(y0, min(need, y1 - 0.15))
         return x0, y0, x1, y1
 
     @classmethod
