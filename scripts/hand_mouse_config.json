@@ -22,7 +22,7 @@
   "edge_zone": 0.15,
   "edge_stabilizer_boost": 1.5,
   "reference_palm_size": 0.15,
-  "mapping_mode": "relative",
+  "mapping_mode": "absolute",
   "relative_gain": 2.0,
   "relative_stabilizer_radius": 4.0,
   "filter_min_cutoff": 0.35,
