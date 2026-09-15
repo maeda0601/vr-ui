@@ -35,7 +35,7 @@
   "scroll_dead_zone": 0.004,
   "zoom_gain": 22.0,
   "zoom_dead_zone": 0.006,
-  "fist_toggle_sec": 3.0,
+  "fist_toggle_sec": 2.0,
   "screen_margin_px": 2,
   "enable_on_start": false,
   "display_mode": "overlay",

@@ -4,21 +4,21 @@
 使い方:
     python scripts/hand_mouse.py
 
-ジェスチャー:
-    人差し指を立てる      : カーソル移動（絶対座標マッピング）
+ジェスチャー（既定設定）:
+    手を開く              : カーソル移動（基準点は手のひら中心、絶対座標マッピング）
     親指＋人差し指ピンチ  : 左クリック／そのまま動かすとドラッグ
-    親指＋中指ピンチ      : 右クリック
+    親指＋薬指ピンチ      : 右クリック（right_click_finger で変更可）
     チョキ（2本指）上下   : スクロール
-    両手ピンチして広げる  : ズーム（Ctrl＋ホイール）
-    グーを一定時間保持    : 操作の有効／無効を切り替え
+    両手ピンチして広げる  : ズーム（Ctrl＋ホイール、use_hand=both のとき）
+    グーを2秒保持         : 操作の有効／無効を切り替え（fist_toggle_sec）
 
 表示:
     既定はデスクトップ上に手の骨格だけを透過表示するオーバーレイ（クリックは素通し）。
     --display preview でカメラ映像ウィンドウ、--display none で非表示。
 
 安全装置:
-    Ctrl+Alt+Q で終了、Ctrl+Alt+H で有効・無効を切り替え、Ctrl+Alt+R でリセット。
-    いずれもフォーカスが無くても効くグローバルホットキー。
+    Ctrl+Alt+Q で終了、Ctrl+Alt+H で有効・無効を切り替え、Ctrl+Alt+R でリセット、
+    Ctrl+Alt+S で左右判定の入れ替え。いずれもフォーカスが無くても効くグローバルホットキー。
     preview表示中は Esc / Space / R も使える。
 """
 
@@ -606,7 +606,7 @@ class HandMouseApp:
                     # 閉じた手は検出されにくいので、まず開いた手を見せてもらう
                     hint = "手を開いてカメラに見せてください"
                 else:
-                    hint = "グーを3秒保持 または Ctrl+Alt+H で開始"
+                    hint = "グーを2秒保持 または Ctrl+Alt+H で開始"
 
                 if use_preview:
                     view = render_hud(frame, self.renderer, self.cfg, state,

@@ -84,7 +84,7 @@ class Config:
     zoom_dead_zone: float = 0.006
 
     # --- グー（握り拳）で有効/無効をトグルする保持時間[秒] ---
-    fist_toggle_sec: float = 3.0
+    fist_toggle_sec: float = 2.0
 
     # --- 安全マージン（画面端に張り付かせない）[px] ---
     screen_margin_px: int = 2
