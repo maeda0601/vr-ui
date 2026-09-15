@@ -199,12 +199,31 @@ class GestureRecognizer:
         self._right_on = False
         self._arm_on = False
         self._prev_d_index = None
+        self._left_pending = 0    # ピンチ条件を満たした連続フレーム数（確定待ち）
+        self._right_pending = 0
 
     def reset(self):
         self._left_on = False
         self._right_on = False
         self._arm_on = False
         self._prev_d_index = None
+        self._left_pending = 0
+        self._right_pending = 0
+
+    def _confirm(self, cond, currently_on, pending_attr):
+        """ピンチ条件が連続フレーム数だけ続いたら成立とみなす（成立中は距離のみで維持）。"""
+        if currently_on:
+            setattr(self, pending_attr, 0)
+            return cond
+        if not cond:
+            setattr(self, pending_attr, 0)
+            return False
+        n = getattr(self, pending_attr) + 1
+        setattr(self, pending_attr, n)
+        if n >= max(1, self.cfg.pinch_confirm_frames):
+            setattr(self, pending_attr, 0)
+            return True
+        return False
 
     def _update_arming(self, d_index):
         """クリック準備（カーソル固定）の判定。
@@ -214,8 +233,9 @@ class GestureRecognizer:
         """
         arm = self.cfg.pinch_arm
         if arm <= 0:
-            self._arm_on = False
-        elif self._arm_on:
+            # 固定機能が無効でも、接近の判定（左クリックの前提）は 0.7 相当で行う
+            arm = 0.7
+        if self._arm_on:
             self._arm_on = d_index < arm
         else:
             self._arm_on = (self._prev_d_index is not None
@@ -268,18 +288,30 @@ class GestureRecognizer:
         # 隣り合う指による左右クリックの取り違えを防ぐ
         d_index = primary.pinch_index
         d_right = state.pinch_right
-        right_on = (self._pinch_state(d_right, self._right_on)
-                    and d_right < d_index * 0.8
-                    and primary.finger_reaching(right_tip, right_pip))
-        # 人差し指を握り込んでいるとき（グー）は左ピンチとみなさない
-        left_on = (self._pinch_state(d_index, self._left_on) and not right_on
-                   and not primary.index_curled)
+        # 親指の接近（クリック準備）は毎フレーム追跡する。左クリックの前提条件にも使う
+        self._update_arming(d_index)
+
+        right_cond = (self._pinch_state(d_right, self._right_on)
+                      and d_right < d_index * 0.8
+                      and primary.finger_reaching(right_tip, right_pip))
+        right_on = self._confirm(right_cond, self._right_on, "_right_pending")
+
+        # 人差し指を握り込んでいるとき（グー）は左ピンチとみなさない。
+        # 未成立のうちは「親指が離れた状態から近づいてきた」ことも要求する
+        left_cond = (self._pinch_state(d_index, self._left_on) and not right_on
+                     and not primary.index_curled)
+        if not self._left_on and self.cfg.pinch_require_approach and not self._arm_on:
+            left_cond = False
+        left_on = self._confirm(left_cond, self._left_on, "_left_pending")
+
+        if self._left_on and not left_on:
+            # 離した直後は、親指を一度離してからでないと再度クリックできない
+            self._arm_on = False
         self._left_on = left_on
         self._right_on = right_on
 
         # ピンチはグーより優先する（つまむと他の指が閉じるため）
         if self._left_on:
-            self._arm_on = False
             state.mode = MODE_LEFT
             state.cursor = self._cursor_point(primary, MODE_LEFT)
             return state
@@ -308,7 +340,7 @@ class GestureRecognizer:
             state.mode = MODE_POINT
             state.cursor = self._cursor_point(primary, MODE_POINT)
             # 親指が人差し指へ近づき始めたらクリック準備（本体側でカーソルを固定する）
-            state.arming = self._update_arming(d_index)
+            state.arming = self._arm_on
             return state
 
         self._arm_on = False

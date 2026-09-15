@@ -47,8 +47,13 @@ class Config:
     skeleton_smoothing: float = 0.25
 
     # --- ピンチ判定（手の大きさで正規化した指先間距離。ヒステリシス付き）---
-    pinch_on: float = 0.45
+    pinch_on: float = 0.40
     pinch_off: float = 0.62
+    # ピンチが成立と判定されるまでに必要な連続フレーム数（1フレームのノイズを捨てる）
+    pinch_confirm_frames: int = 2
+    # 左クリックは「親指が一度 pinch_arm より離れてから近づいた」ときだけ受け付ける
+    # （最初から指が近い姿勢での誤クリックを防ぐ。false で従来どおり距離のみで判定）
+    pinch_require_approach: bool = True
     # 親指が人差し指へこの距離まで「近づいてきたら」カーソルを固定し、クリック位置のズレを防ぐ
     # （0で無効。最初から近い姿勢では発火しない）
     pinch_arm: float = 0.7
