@@ -166,8 +166,12 @@ class Config:
         フレーム端に寄り過ぎないよう各余白の最小値で止める。
         palm_size（映っている手のひら長、正規化座標）を渡すと、指先がフレーム外に
         出ない高さまで上端を下げる（adaptive_top_margin）。
+
+        gain を小さくしてもエリアは min_margin_* より外へは広がらないので、
+        ある値から先は感度を下げても何も変わらない（設定画面がそれを表示する）。
+        もっと遅くしたいときは min_margin_* も下げる必要がある。
         """
-        gain = max(0.3, float(self.cursor_gain))
+        gain = max(0.05, float(self.cursor_gain))
 
         def expand(lo, hi, min_lo, min_hi):
             span = 1.0 - lo - hi

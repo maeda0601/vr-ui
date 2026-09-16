@@ -19,6 +19,16 @@ LABEL_WIDTH = 22
 DESC_WRAP = 620
 GRAY = "#666666"
 ACCENT = "#0a6cbf"
+WARN = "#b45309"
+
+# 操作エリアの広さに関わる項目。どれかが変われば「効き目」の表示を作り直す
+AREA_FIELDS = ("cursor_gain", "active_margin_x", "active_margin_top", "active_margin_bottom",
+               "min_margin_x", "min_margin_top", "min_margin_bottom",
+               "adaptive_top_margin", "finger_reach_factor", "adaptive_margin_pad")
+# この項目の下に効き目を出す（感度を下げても変わらないことがあるため）
+EFFECT_AFTER = "cursor_gain"
+# 効き目を計算するときの手の映り方（手のひら長、正規化座標）。標準的な距離の目安
+REFERENCE_PALM = 0.15
 
 
 def _round_step(value, step):
@@ -52,6 +62,7 @@ class SettingsApp:
         self.items = {}       # name -> Item
         self.canvases = {}    # タブの表示名 -> Canvas（ホイール操作用）
         self.saved = {}       # 最後に保存した値（再起動が要る変更の検出用）
+        self.effect_labels = []   # 感度の効き目を出すラベル（タブごとに1つ）
         self.dirty = False
 
         self.root = tk.Tk()
@@ -86,6 +97,12 @@ class SettingsApp:
 
         self._build_buttons()
         self.root.bind_all("<MouseWheel>", self._on_wheel)
+
+        for name in AREA_FIELDS:
+            var = self.vars.get(name)
+            if var is not None:
+                var.trace_add("write", lambda *_a: self._update_effect())
+        self._update_effect()
 
     def _scrollable(self, parent, title):
         """縦スクロールできる領域を作り、中身を置くフレームを返す。"""
@@ -159,6 +176,11 @@ class SettingsApp:
             ttk.Label(row, text=item.desc, foreground=GRAY, wraplength=DESC_WRAP,
                       justify="left").pack(fill="x", padx=(6, 0))
 
+        if item.name == EFFECT_AFTER:
+            note = ttk.Label(row, wraplength=DESC_WRAP, justify="left")
+            note.pack(fill="x", padx=(6, 0), pady=(3, 0))
+            self.effect_labels.append(note)
+
     def _add_number(self, parent, item, var):
         """数値項目: スライダーと直接入力欄（どちらを動かしても同じ値になる）。"""
         text = self.texts.get(item.name)
@@ -219,6 +241,61 @@ class SettingsApp:
         value = min(max(value, item.lo), item.hi)
         var.set(int(round(value)) if item.kind == "int" else value)
         self._sync_text(item)
+
+    # --- 感度の効き目 -----------------------------------------------
+    @staticmethod
+    def _area_size(cfg):
+        x0, y0, x1, y1 = cfg.active_area(REFERENCE_PALM)
+        return x1 - x0, y1 - y0
+
+    def _area_values(self):
+        """画面の値だけを入れた Config（操作エリアの計算用）。"""
+        cfg = Config()
+        for name in AREA_FIELDS:
+            setattr(cfg, name, self.vars[name].get())
+        return cfg
+
+    def _update_effect(self):
+        """今の値で操作エリアがどれだけ広がるかを出す。
+
+        感度を下げてもエリアは余白の下限より外へは広がらない。その状態になったら
+        「これ以上下げても変わらない」と伝える（下げたのに何も起きない、を防ぐ）。
+        """
+        if not self.effect_labels:
+            return
+        try:
+            base, slower, loosened = (self._area_values() for _ in range(3))
+        except (tk.TclError, KeyError, ValueError):
+            return
+
+        width, height = self._area_size(base)
+        # さらに感度を下げても広がらないなら、余白の下限に達している
+        slower.cursor_gain = max(0.05, float(slower.cursor_gain) * 0.7)
+        sw, sh = self._area_size(slower)
+        capped = abs(sw - width) < 1e-6 and abs(sh - height) < 1e-6
+
+        text = (f"今の操作エリア: 横 {width * 100:.0f}% × 縦 {height * 100:.0f}%"
+                "（カメラ映像に対する割合。広いほどカーソルはゆっくり動く）")
+        color = ACCENT
+        if capped:
+            # 余白を削ればまだ広がるのか、もう映像いっぱいなのかで案内を変える
+            loosened.min_margin_x = 0.0
+            loosened.min_margin_top = 0.0
+            loosened.min_margin_bottom = 0.0
+            loosened.adaptive_top_margin = False
+            lw, lh = self._area_size(loosened)
+            color = WARN
+            # 「※」の後に半角スペースを置くと、そこで折り返されて「※」だけの行ができる
+            if lw > width + 1e-6 or lh > height + 1e-6:
+                text += ("\n※余白の下限まで広がりきっています。これ以上「カーソル感度」を下げても変わりません。"
+                         "もっとゆっくりにしたいときは、「操作エリア・感度」タブの"
+                         "「左右余白の下限」「下余白の下限」「上余白を自動調整」を見直してください"
+                         "（余白を削るほど、手がカメラの外に出やすくなります）。")
+            else:
+                text += ("\n※カメラ映像をいっぱいに使っています。この方式（手の位置＝カーソル位置）では"
+                         "これが一番ゆっくりの状態です。")
+        for label in self.effect_labels:
+            label.configure(text=text, foreground=color)
 
     def _mark_dirty(self):
         if not self.dirty:
