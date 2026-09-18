@@ -11,7 +11,7 @@
   "active_margin_x": 0.18,
   "active_margin_top": 0.26,
   "active_margin_bottom": 0.32,
-  "cursor_gain": 0.3,
+  "cursor_gain": 0.5,
   "min_margin_x": 0.05,
   "min_margin_top": 0.24,
   "min_margin_bottom": 0.25,
