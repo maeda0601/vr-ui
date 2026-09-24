@@ -15,6 +15,7 @@ user32 = ctypes.WinDLL("user32", use_last_error=True)
 
 ERROR_ALREADY_EXISTS = 183
 SYNCHRONIZE = 0x00100000
+MB_ICONWARNING = 0x00000030
 MB_ICONINFORMATION = 0x00000040
 MB_SETFOREGROUND = 0x00010000
 MB_TOPMOST = 0x00040000
@@ -71,8 +72,14 @@ def notify_already_running(show_dialog):
     message = ("ハンドマウスは既に起動しています。\n\n"
                "二重に起動すると、カメラとホットキーを取り合って\n"
                "どちらも操作できなくなります。\n\n"
-               "動いている方を終了するには Ctrl+Alt+Q を押してください。")
+               "動いている方を終了するには Ctrl+Alt+Q を押してください。\n"
+               "（他のアプリと重なる環境では Ctrl+Alt+Shift+Q または Ctrl+Alt+F12）")
     print(message.replace("\n\n", "\n"))
     if show_dialog:
-        user32.MessageBoxW(None, message, "ハンドマウス",
-                           MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST)
+        show_message(message)
+
+
+def show_message(message, warning=False):
+    """ダイアログで知らせる（コンソール無しで起動したときは print が見えないため）。"""
+    icon = MB_ICONWARNING if warning else MB_ICONINFORMATION
+    user32.MessageBoxW(None, message, "ハンドマウス", icon | MB_SETFOREGROUND | MB_TOPMOST)

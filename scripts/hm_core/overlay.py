@@ -150,9 +150,25 @@ def draw_ghost_hand(frame, hand):
         cv2.circle(frame, p, 3, (160, 160, 160), -1, cv2.LINE_AA)
 
 
+def _help_text(keys):
+    """HUD下部の操作説明。グローバルホットキーは実際に登録できたものだけを出す。"""
+    text = "Space:有効切替  R:リセット  Esc:終了"
+    if keys is None:
+        keys = {"toggle": "Ctrl+Alt+H", "swap": "Ctrl+Alt+S", "quit": "Ctrl+Alt+Q"}
+    parts = [f"{keys[n]} {label}" for n, label in
+             (("toggle", "切替"), ("swap", "左右入替"), ("quit", "終了")) if keys.get(n)]
+    if parts:
+        text += "   /   " + "  ".join(parts)
+    return text
+
+
 def render_hud(frame, renderer, cfg, state, enabled, fps, status_text="", ignored_hands=(),
-               area=None):
-    """プレビュー画面にHUDを重ねて返す。"""
+               area=None, keys=None):
+    """プレビュー画面にHUDを重ねて返す。
+
+    keys: 登録できたグローバルホットキーの表示名 {"toggle": "Ctrl+Alt+H", ...}
+    （他のアプリと重なって別の組み合わせになっていることがあるので、決め打ちしない）
+    """
     h, w = frame.shape[:2]
 
     draw_active_area(frame, cfg, area)
@@ -180,8 +196,7 @@ def render_hud(frame, renderer, cfg, state, enabled, fps, status_text="", ignore
         ("操作: 有効" if enabled else "操作: 無効", (40, 10), 20, lamp_color),
         (mode_text, (40, 36), 18, COL_TEXT),
         (f"{fps:5.1f} fps", (w - 100, 12), 18, COL_TEXT),
-        ("Space:有効切替  R:リセット  Esc:終了   /   Ctrl+Alt+H 切替  Ctrl+Alt+S 左右入替  Ctrl+Alt+Q 終了",
-         (12, h - 48), 15, COL_TEXT),
+        (_help_text(keys), (12, h - 48), 15, COL_TEXT),
     ]
     if status_text:
         items.append((status_text, (12, h - 26), 15, COL_ON))

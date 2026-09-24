@@ -19,7 +19,9 @@
 安全装置:
     Ctrl+Alt+Q で終了、Ctrl+Alt+H で有効・無効を切り替え、Ctrl+Alt+R でリセット、
     Ctrl+Alt+S で左右判定の入れ替え。いずれもフォーカスが無くても効くグローバルホットキー。
-    preview表示中は Esc / Space / R も使える。
+    他のアプリが使っていて登録できないときは Ctrl+Alt+Shift+(同じキー) に切り替える
+    （終了はさらに Ctrl+Alt+F12）。終了キーをどれも登録できず、ほかに止める手段も無い
+    ときは起動を中止する。preview表示中は Esc / Space / R も使える。
 """
 
 import argparse
@@ -40,13 +42,14 @@ from hm_core import gestures as G                      # noqa: E402
 from hm_core.camera import CameraStream                # noqa: E402
 from hm_core.config import Config                      # noqa: E402
 from hm_core.filters import Point2DFilter              # noqa: E402
-from hm_core.hotkeys import HotkeyManager              # noqa: E402
+from hm_core.hotkeys import (                          # noqa: E402
+    HotkeyManager, MOD_ALT, MOD_CONTROL, MOD_SHIFT)
 from hm_core.mouse import MouseController, enable_dpi_awareness  # noqa: E402
 from hm_core.overlay import TextRenderer, render_hud   # noqa: E402
 from hm_core.overlay_window import HandOverlay         # noqa: E402
 from hm_core.settings_schema import RESTART_REQUIRED   # noqa: E402
 from hm_core.single_instance import (                  # noqa: E402
-    SingleInstance, notify_already_running)
+    SingleInstance, notify_already_running, show_message)
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "scripts" / "hand_mouse_config.json"
@@ -56,6 +59,22 @@ VK_H = 0x48
 VK_Q = 0x51
 VK_R = 0x52
 VK_S = 0x53
+VK_F12 = 0x7B
+
+# グローバルホットキーの候補（先頭から順に試す）。他のアプリが同じ組み合わせを
+# 使っていると登録できないので、代わりの組み合わせを用意しておく。
+# 終了キーは安全装置の要なので候補を多めに持つ
+_CA = MOD_CONTROL | MOD_ALT
+_CAS = MOD_CONTROL | MOD_ALT | MOD_SHIFT
+HOTKEY_CANDIDATES = {
+    "toggle": [(_CA, VK_H, "Ctrl+Alt+H"), (_CAS, VK_H, "Ctrl+Alt+Shift+H")],
+    "quit": [(_CA, VK_Q, "Ctrl+Alt+Q"), (_CAS, VK_Q, "Ctrl+Alt+Shift+Q"),
+             (_CA, VK_F12, "Ctrl+Alt+F12")],
+    "reset": [(_CA, VK_R, "Ctrl+Alt+R"), (_CAS, VK_R, "Ctrl+Alt+Shift+R")],
+    "swap": [(_CA, VK_S, "Ctrl+Alt+S"), (_CAS, VK_S, "Ctrl+Alt+Shift+S")],
+}
+HOTKEY_PURPOSES = {"toggle": "有効切替", "quit": "終了", "reset": "リセット",
+                   "swap": "左右判定の入れ替え"}
 
 DISPLAY_MODES = ("overlay", "preview", "none")
 
@@ -120,6 +139,8 @@ class HandMouseApp:
         # ファイル側で変えられたときだけ「反映しません」と知らせるために覚えておく
         self.override_file_values = {}
         self.overlay = None               # 透過オーバーレイ（設定の反映で触る）
+        self.hotkey_labels = {}           # 登録できたホットキーの表示名 {"quit": "Ctrl+Alt+Q", ...}
+        self.no_console = False           # コンソール無し（pythonw）で起動した（ダイアログで知らせる）
         self._debug_printed = 0.0         # 判定値をコンソールに出した時刻
         self.last_click_at = None         # 直前の左クリック時刻（ダブルクリック表示用）
         self.status_text = ""
@@ -713,17 +734,63 @@ class HandMouseApp:
             elif name == "swap":
                 self.toggle_swap_handedness()
 
+    def key(self, name):
+        """ホットキーの表示名（登録できなかったら None）。案内文で使う。"""
+        return self.hotkey_labels.get(name)
+
+    def register_hotkeys(self, use_preview):
+        """グローバルホットキーを登録する。起動を続けてよければ True。
+
+        終了キーは安全装置の要。オーバーレイはクリックを素通しし閉じるボタンも無いので、
+        終了キーが無いとコンソール無し起動ではタスクマネージャー以外に止める手段が無い。
+        そういう状態で起動を続けないよう、どの候補も登録できなければ中止する。
+        """
+        for name, candidates in HOTKEY_CANDIDATES.items():
+            self.hotkey_labels[name] = self.hotkeys.register_any(name, candidates)
+
+        if self.key("quit") is None:
+            tried = "、".join(label for _m, _v, label in HOTKEY_CANDIDATES["quit"])
+            if use_preview:
+                print(f"終了用のホットキー（{tried}）を登録できませんでした。"
+                      "プレビュー画面で Esc を押すと終了できます。")
+            elif not self.no_console:
+                print(f"終了用のホットキー（{tried}）を登録できませんでした。"
+                      "このコンソールで Ctrl+C を押すと終了できます。")
+            else:
+                show_message(
+                    f"終了用のホットキー（{tried}）が、すべて他のアプリに使われていて登録できません。\n\n"
+                    "このまま起動すると終了する手段が無くなるため、起動を中止しました。\n"
+                    "ホットキーを使っているアプリを終了してから起動し直すか、"
+                    "run_hand_mouse.bat から起動してください（コンソールの Ctrl+C で終了できます）。",
+                    warning=True)
+                return False
+
+        # 代わりの組み合わせになったもの・登録できなかったものを知らせる
+        notes = []
+        for name, candidates in HOTKEY_CANDIDATES.items():
+            label = self.key(name)
+            if label is None:
+                notes.append(f"{HOTKEY_PURPOSES[name]}: 使えません（{candidates[0][2]} は他のアプリが使用中）")
+            elif label != candidates[0][2]:
+                notes.append(f"{HOTKEY_PURPOSES[name]}: {label}（{candidates[0][2]} は他のアプリが使用中）")
+        if notes:
+            text = "ホットキーを一部変更しました。 " + " / ".join(notes)
+            self.notify(text, 15.0)
+            if self.no_console:
+                show_message("他のアプリと重なるため、次のホットキーを変更しました。\n\n"
+                             + "\n".join(notes))
+        return True
+
     # --- メインループ -------------------------------------------------
     def run(self):
-        cap = self.open_camera()
-        landmarker = self.create_landmarker()
-        self.hotkeys.register("toggle", VK_H)
-        self.hotkeys.register("quit", VK_Q)
-        self.hotkeys.register("reset", VK_R)
-        self.hotkeys.register("swap", VK_S)
-
         display = self.cfg.display_mode if self.cfg.display_mode in DISPLAY_MODES else "overlay"
         use_preview = display == "preview"
+        # カメラより先にホットキーを確かめる（中止するときにカメラを開いたままにしない）
+        if not self.register_hotkeys(use_preview):
+            self.hotkeys.unregister_all()
+            return
+        cap = self.open_camera()
+        landmarker = self.create_landmarker()
         overlay = None
         if use_preview:
             cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
@@ -738,12 +805,15 @@ class HandMouseApp:
         self.note_config_saved()   # 起動時点の更新時刻を基準にする
 
         print(f"画面解像度: {self.mouse.screen_w}x{self.mouse.screen_h} / 表示: {display}")
-        print("Ctrl+Alt+H:有効切替 / Ctrl+Alt+R:リセット / Ctrl+Alt+S:左右判定の入れ替え / "
-              "Ctrl+Alt+Q:終了（どこからでも有効）")
+        keys = [f"{self.key(n)}:{HOTKEY_PURPOSES[n]}" for n in ("toggle", "reset", "swap", "quit")
+                if self.key(n)]
+        if keys:
+            print(" / ".join(keys) + "（どこからでも有効）")
         if use_preview:
             print("プレビュー表示中は Space / R / Esc も使えます。")
         if not self.enabled:
-            print("※ 安全のため操作は無効状態で起動しました。Ctrl+Alt+H で開始します。")
+            how = f"グーを保持するか {self.key('toggle')}" if self.key("toggle") else "グーを保持"
+            print(f"※ 安全のため操作は無効状態で起動しました。{how} で開始します。")
 
         last_time = time.monotonic()
         last_timestamp_ms = -1
@@ -803,7 +873,9 @@ class HandMouseApp:
                         self._ignored_notice_shown = True
                         print(f"検出した手を「{side}」と判定して無視しています（設定 use_hand={self.cfg.use_hand}）。"
                               "これが実際の右手なら左右判定が逆です。"
-                              "Ctrl+Alt+S で判定を入れ替えられます（設定に保存されます）。")
+                              + (f"{self.key('swap')} で判定を入れ替えられます（設定に保存されます）。"
+                                 if self.key("swap") else
+                                 "設定画面の「左右の判定を入れ替える」をオンにしてください。"))
                 else:
                     self._ignored_since_first = 0.0
                 ignored_hands = [h for h in hands if h not in active_hands]
@@ -821,7 +893,9 @@ class HandMouseApp:
                     hint = f"グー保持中 {held:.1f} / {self.cfg.fist_toggle_sec:.1f} 秒"
                 elif ignored_only:
                     hint = (f"{'右' if self.cfg.use_hand == 'right' else '左'}手だけを使います"
-                            f"（{ignored_label}） Ctrl+Alt+S で左右入れ替え")
+                            f"（{ignored_label}）")
+                    if self.key("swap"):
+                        hint += f" {self.key('swap')} で左右入れ替え"
                 elif state.fingers_out:
                     hint = "指先がカメラの外です（手を下げるか、画面を手前に倒してカメラを下向きに）"
                 elif state.near_edge:
@@ -845,7 +919,10 @@ class HandMouseApp:
                     # 閉じた手は検出されにくいので、まず開いた手を見せてもらう
                     hint = "手を開いてカメラに見せてください"
                 else:
-                    hint = "グーを2秒保持 または Ctrl+Alt+H で開始"
+                    hint = f"グーを{self.cfg.fist_toggle_sec:g}秒保持"
+                    if self.key("toggle"):
+                        hint += f" または {self.key('toggle')}"
+                    hint += " で開始"
 
                 # 判定値の表示（しきい値調整用）
                 if self.cfg.debug_hud and state.hands:
@@ -866,7 +943,7 @@ class HandMouseApp:
                 if use_preview:
                     view = render_hud(frame, self.renderer, self.cfg, state,
                                       self.enabled, self.fps, hint, ignored_hands,
-                                      area=self.current_area())
+                                      area=self.current_area(), keys=self.hotkey_labels)
                     cv2.imshow(WINDOW_NAME, view)
                     if cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
                         break
@@ -973,6 +1050,7 @@ def main():
     try:
         app = HandMouseApp(cfg)
         app.config_path = args.config
+        app.no_console = log_file is not None
         app.cli_overrides = overrides
         app.override_file_values = file_values
         app.run()

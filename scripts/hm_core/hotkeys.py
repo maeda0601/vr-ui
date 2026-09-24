@@ -26,16 +26,30 @@ class HotkeyManager:
         self._names = {}
         self._next_id = 1
 
-    def register(self, name, vk, modifiers=MOD_CONTROL | MOD_ALT):
+    def register(self, name, vk, modifiers=MOD_CONTROL | MOD_ALT, quiet=False):
         """ホットキーを登録する。成功したらTrue。"""
         hotkey_id = self._next_id
         ok = user32.RegisterHotKey(None, hotkey_id, modifiers | MOD_NOREPEAT, vk)
         if not ok:
-            print(f"ホットキー登録に失敗しました（他のアプリと競合）: {name}")
+            if not quiet:
+                print(f"ホットキー登録に失敗しました（他のアプリと競合）: {name}")
             return False
         self._names[hotkey_id] = name
         self._next_id += 1
         return True
+
+    def register_any(self, name, candidates):
+        """候補 [(修飾キー, 仮想キー, 表示名), ...] を順に試し、登録できたものの表示名を返す。
+
+        他のアプリが同じ組み合わせを使っていると登録できないので、代わりの組み合わせを
+        用意しておく。どれも駄目なら None。
+        """
+        for modifiers, vk, label in candidates:
+            if self.register(name, vk, modifiers, quiet=True):
+                return label
+        tried = "、".join(label for _m, _v, label in candidates)
+        print(f"ホットキーを登録できませんでした（他のアプリと競合）: {name}（試したキー: {tried}）")
+        return None
 
     def poll(self):
         """押されたホットキー名のリストを返す（非ブロッキング）。"""

@@ -459,8 +459,14 @@ class GestureRecognizer:
         if self.cfg.cursor_landmark != "index_tip" or primary.index_extended:
             state.mode = MODE_POINT
             state.cursor = self._cursor_point(primary, MODE_POINT)
-            # 親指が人差し指へ近づき始めたらクリック準備（本体側でカーソルを固定する）
-            state.arming = self._arm_on
+            if middle_lock:
+                # 中指ピンチ固定: 固定中（と余韻）だけカーソルを止める。pinch_arm とは無関係
+                state.arming = self._arm_on
+            else:
+                # 親指が人差し指へ近づき始めたらクリック準備（本体側でカーソルを固定する）。
+                # pinch_arm=0 は「固定しない」。_arm_on は左クリックの前提（接近してきたか）
+                # にも使うので追跡は続けるが、カーソルの固定には使わない
+                state.arming = self._arm_on and self.cfg.pinch_arm > 0
             return state
 
         self._arm_on = False
