@@ -6,6 +6,8 @@ venv/
 
 # MediaPipe の検出モデル（約7.8MB）。uv run scripts/download_model.py で取得する
 models/*.task
+# ダウンロード途中の一時ファイル・壊れていて退避したファイル
+models/*.task.*
 
 # コンソール無し起動時のログ
 logs/

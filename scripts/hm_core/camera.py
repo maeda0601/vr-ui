@@ -12,7 +12,11 @@ class CameraStream:
     def __init__(self, index=0, width=640, height=480, fps=30):
         self.cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
         if not self.cap.isOpened():
-            raise RuntimeError(f"カメラを開けませんでした: index={index}")
+            self.cap.release()   # 中途半端に確保したものを残さない
+            raise RuntimeError(
+                f"カメラを開けませんでした（カメラ番号 {index}）。"
+                "他のアプリ（Teams・Zoom・カメラアプリなど）が使っていないか、"
+                "カメラのシャッターやOFFキーで塞がれていないか確認してください。")
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         self.cap.set(cv2.CAP_PROP_FPS, fps)
@@ -65,5 +69,10 @@ class CameraStream:
     def release(self):
         self._stopped = True
         if self._thread.is_alive():
-            self._thread.join(timeout=1.0)
+            self._thread.join(timeout=2.0)
+        if self._thread.is_alive():
+            # 読み取り中のまま応答しない。読み取り中に解放すると OpenCV の内部で落ちることが
+            # あるので、ここでは解放せずプロセスの終了に任せる（スレッドは daemon）
+            print("カメラの読み取りが終わらないため、解放はプロセスの終了時に任せます。")
+            return
         self.cap.release()

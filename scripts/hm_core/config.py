@@ -2,6 +2,7 @@
 """動作設定。JSONファイルで上書きできる。"""
 
 import json
+import math
 import os
 import time
 from dataclasses import dataclass, asdict, fields
@@ -221,24 +222,45 @@ class Config:
         return cls._from_data(_read_json(Path(path)))
 
     @classmethod
-    def from_text(cls, text, source="設定ファイル"):
+    def from_text(cls, text, source="設定ファイル", fallback=None, problems=None):
         """JSON文字列から作る。壊れているときは None を返す。
 
         動作中の読み直しでは、比較のために読んだ中身をそのまま渡す。ファイルを
         読み直すと、設定画面が置き換えている一瞬に開けず、壊れていると誤判定するため。
+        fallback を渡すと、使えない値の項目はその値（＝今の設定）を使う。
+        problems にリストを渡すと、使えなかった値の説明を追加する。
         """
-        return cls._from_data(_parse_json(text, source))
+        return cls._from_data(_parse_json(text, source), fallback, problems)
 
     @classmethod
-    def _from_data(cls, data):
+    def _from_data(cls, data, fallback=None, problems=None):
+        """辞書から作る。各項目は既定値の型にそろえ、使えない値は採用しない。
+
+        手で編集して "12" のように文字列で書いたり、選択肢に無い値を書いたりすると、
+        動作中の計算で型エラーになって落ちる／手を全部無視するなどの不具合になるため。
+        """
         if data is None:
             return None
         cfg = cls()
+        choices = _choice_values()
+        for f in fields(cls):
+            if f.name not in data:
+                continue
+            default = getattr(cfg, f.name)
+            value, error = _coerce(data[f.name], default, choices.get(f.name))
+            if error is None:
+                setattr(cfg, f.name, value)
+                continue
+            keep = getattr(fallback, f.name) if fallback is not None else default
+            message = (f"設定 {f.name} の値 {data[f.name]!r} は使えないため、"
+                       f"{'今の値' if fallback is not None else '既定値'} {keep!r} を使います（{error}）")
+            print(message)
+            if problems is not None:
+                problems.append(message)
+            setattr(cfg, f.name, keep)
         known = {f.name for f in fields(cls)}
-        for key, value in data.items():
-            if key in known:
-                setattr(cfg, key, value)
-            else:
+        for key in data:
+            if key not in known:
                 print(f"未知の設定項目は無視します: {key}")
         return cfg
 
@@ -268,6 +290,57 @@ class Config:
                 raise KeyError(f"未知の設定項目です: {key}")
             data[key] = value
         return _write_json(path, data)
+
+
+_TRUE_WORDS = ("true", "yes", "on", "1")
+_FALSE_WORDS = ("false", "no", "off", "0")
+
+
+def _choice_values():
+    """選択肢が決まっている項目 {名前: 選択肢}。設定画面の定義を正とする。"""
+    from .settings_schema import ITEMS   # 設定画面側は config を読み込まないので循環しない
+    return {item.name: item.choices for item in ITEMS if item.kind == "choice"}
+
+
+def _coerce(value, default, choices=None):
+    """値を既定値と同じ型にそろえる。戻り値は (値, None) か (None, 使えない理由)。"""
+    if isinstance(default, bool):
+        if isinstance(value, bool):
+            return value, None
+        if isinstance(value, (int, float)) and value in (0, 1):
+            return bool(value), None
+        if isinstance(value, str) and value.strip().lower() in _TRUE_WORDS + _FALSE_WORDS:
+            return value.strip().lower() in _TRUE_WORDS, None
+        return None, "true か false で指定してください"
+
+    if isinstance(default, (int, float)):
+        want_int = isinstance(default, int)
+        number = None
+        if isinstance(value, bool):
+            number = None          # true/false は数値として扱わない
+        elif isinstance(value, (int, float)):
+            number = float(value)
+        elif isinstance(value, str):
+            try:
+                number = float(value.strip())
+            except ValueError:
+                number = None
+        if number is None or not math.isfinite(number):
+            return None, "数値で指定してください"
+        if want_int:
+            if not number.is_integer():
+                return None, "整数で指定してください"
+            return int(number), None
+        return number, None
+
+    if isinstance(default, str):
+        if not isinstance(value, str):
+            return None, "文字列で指定してください"
+        if choices and value not in choices:
+            return None, f"{' / '.join(choices)} のどれかを指定してください"
+        return value, None
+
+    return value, None
 
 
 def _read_json(path):

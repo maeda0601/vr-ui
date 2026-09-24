@@ -26,6 +26,7 @@
 
 import argparse
 import math
+import os
 import sys
 import time
 from dataclasses import fields
@@ -38,6 +39,7 @@ from mediapipe.tasks.python import vision
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from download_model import DEST as MODEL_DEST, check_model  # noqa: E402
 from hm_core import gestures as G                      # noqa: E402
 from hm_core.camera import CameraStream                # noqa: E402
 from hm_core.config import Config                      # noqa: E402
@@ -160,9 +162,24 @@ class HandMouseApp:
         if not model_path.exists():
             raise FileNotFoundError(
                 f"モデルファイルがありません: {model_path}\n"
-                "次のコマンドで取得してください:\n"
-                "  python scripts/download_model.py"
+                "run_hand_mouse.bat を実行するか、次のコマンドで取得してください:\n"
+                "  uv run scripts/download_model.py"
             )
+        # 標準のモデルなら中身を確かめる。ダウンロードが途中で切れたファイルが残っていると、
+        # MediaPipe が分かりにくいエラーで止まり、起動ランチャーも「ある」とみなして取り直さない
+        if model_path.resolve() == MODEL_DEST.resolve():
+            problem = check_model(model_path)
+            if problem is not None:
+                broken = model_path.with_name(model_path.name + ".broken")
+                try:
+                    os.replace(model_path, broken)   # 消さずに退避。次の起動で取り直される
+                    moved = f"{broken.name} に退避しました。"
+                except OSError:
+                    moved = "削除してから、"
+                raise RuntimeError(
+                    f"モデルファイルが壊れています（{problem}）。\n{moved}"
+                    "run_hand_mouse.bat を実行すると取り直します"
+                    "（または uv run scripts/download_model.py）。")
         options = vision.HandLandmarkerOptions(
             base_options=BaseOptions(model_asset_path=str(model_path)),
             running_mode=vision.RunningMode.VIDEO,
@@ -171,7 +188,10 @@ class HandMouseApp:
             min_hand_presence_confidence=cfg.min_presence_confidence,
             min_tracking_confidence=cfg.min_tracking_confidence,
         )
-        return vision.HandLandmarker.create_from_options(options)
+        try:
+            return vision.HandLandmarker.create_from_options(options)
+        except Exception as e:
+            raise RuntimeError(f"モデルを読み込めませんでした: {model_path}（{e}）") from e
 
     # --- 補助 ---------------------------------------------------------
     def notify(self, text, duration=2.0):
@@ -221,7 +241,9 @@ class HandMouseApp:
 
         # 比較に使った中身をそのまま解析する（ファイルを読み直すと、設定画面が
         # 置き換えている一瞬に開けず、壊れていると誤判定してこの変更を取りこぼす）
-        new_cfg = Config.from_text(text, self.config_path)
+        # 型の合わない値・選択肢に無い値は、既定値ではなく今の値を使い続ける
+        problems = []
+        new_cfg = Config.from_text(text, self.config_path, fallback=self.cfg, problems=problems)
         if new_cfg is None:
             # 書き損じ・書き込み途中のファイルを既定値として反映すると、左右判定や感度が
             # 勝手に戻ってしまう。今の設定のまま動かし、直して保存されたら読み直す
@@ -232,15 +254,18 @@ class HandMouseApp:
         # 再起動が要る項目は反映しないので差分が残り続ける。知らせるのは増えた分だけ
         fresh = [n for n in restart if n not in self.restart_pending]
         self.restart_pending = set(restart)
-        if not changed and not fresh and not overridden:
+        if not changed and not fresh and not overridden and not problems:
             return
         message = f"設定を読み直しました（{changed}項目）"
+        if problems:
+            names = "、".join(m.split(" ")[1] for m in problems)   # 「設定 名前 の値…」の名前
+            message += f" ※{names} は使えない値だったため今の値のまま（詳細はログ）"
         if fresh:
             message += f" ※{'、'.join(fresh)} は再起動後に反映されます"
         if overridden:
             message += (f" ※{'、'.join(overridden)} は起動オプションで指定しているため"
                         "反映しません")
-        self.notify(message, 4.0)
+        self.notify(message, 6.0 if problems else 4.0)
 
     def apply_config(self, new_cfg):
         """新しい設定を今の動作へ入れる。
@@ -789,38 +814,40 @@ class HandMouseApp:
         if not self.register_hotkeys(use_preview):
             self.hotkeys.unregister_all()
             return
-        cap = self.open_camera()
-        landmarker = self.create_landmarker()
-        overlay = None
-        if use_preview:
-            cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
-            try:
-                cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_TOPMOST, 1)
-            except cv2.error:
-                pass
-        elif display == "overlay":
-            overlay = HandOverlay(self.mouse.screen_w, self.mouse.screen_h,
-                                  self.cfg.overlay_alpha)
-        self.overlay = overlay
-        self.note_config_saved()   # 起動時点の更新時刻を基準にする
-
-        print(f"画面解像度: {self.mouse.screen_w}x{self.mouse.screen_h} / 表示: {display}")
-        keys = [f"{self.key(n)}:{HOTKEY_PURPOSES[n]}" for n in ("toggle", "reset", "swap", "quit")
-                if self.key(n)]
-        if keys:
-            print(" / ".join(keys) + "（どこからでも有効）")
-        if use_preview:
-            print("プレビュー表示中は Space / R / Esc も使えます。")
-        if not self.enabled:
-            how = f"グーを保持するか {self.key('toggle')}" if self.key("toggle") else "グーを保持"
-            print(f"※ 安全のため操作は無効状態で起動しました。{how} で開始します。")
-
-        last_time = time.monotonic()
-        last_timestamp_ms = -1
-        frame_id = 0
-        timeouts = 0
-
+        # 作れたものだけを後始末できるよう、初期化も try の中で行う
+        # （カメラは開けたがモデルの読み込みで失敗した、などの場合にカメラを握ったままにしない）
+        cap = landmarker = overlay = None
         try:
+            cap = self.open_camera()
+            landmarker = self.create_landmarker()
+            if use_preview:
+                cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
+                try:
+                    cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_TOPMOST, 1)
+                except cv2.error:
+                    pass
+            elif display == "overlay":
+                overlay = HandOverlay(self.mouse.screen_w, self.mouse.screen_h,
+                                      self.cfg.overlay_alpha)
+            self.overlay = overlay
+            self.note_config_saved()   # 起動時点の更新時刻を基準にする
+
+            print(f"画面解像度: {self.mouse.screen_w}x{self.mouse.screen_h} / 表示: {display}")
+            keys = [f"{self.key(n)}:{HOTKEY_PURPOSES[n]}" for n in ("toggle", "reset", "swap", "quit")
+                    if self.key(n)]
+            if keys:
+                print(" / ".join(keys) + "（どこからでも有効）")
+            if use_preview:
+                print("プレビュー表示中は Space / R / Esc も使えます。")
+            if not self.enabled:
+                how = f"グーを保持するか {self.key('toggle')}" if self.key("toggle") else "グーを保持"
+                print(f"※ 安全のため操作は無効状態で起動しました。{how} で開始します。")
+
+            last_time = time.monotonic()
+            last_timestamp_ms = -1
+            frame_id = 0
+            timeouts = 0
+
             while self.running:
                 frame_id, frame = cap.read(frame_id)
                 if frame is None:
@@ -960,14 +987,29 @@ class HandMouseApp:
         except KeyboardInterrupt:
             print("中断しました。")
         finally:
-            self.mouse.release_all()
-            self.hotkeys.unregister_all()
-            if overlay is not None:
-                overlay.close()
-            landmarker.close()
-            cap.release()
-            cv2.destroyAllWindows()
-            print("終了しました。")
+            self.shutdown(cap, landmarker, overlay)
+
+    def shutdown(self, cap, landmarker, overlay):
+        """後始末。作れたものだけを片付け、1つが失敗しても残りは必ず行う。
+
+        マウスボタンの解放とホットキーの解除を最初に行う（最も大事な安全装置のため）。
+        """
+        steps = [("マウスボタンの解放", self.mouse.release_all),
+                 ("ホットキーの解除", self.hotkeys.unregister_all)]
+        if overlay is not None:
+            steps.append(("オーバーレイ", overlay.close))
+        if landmarker is not None:
+            steps.append(("手の検出器", landmarker.close))
+        if cap is not None:
+            steps.append(("カメラ", cap.release))
+        steps.append(("ウィンドウ", cv2.destroyAllWindows))
+        for label, step in steps:
+            try:
+                step()
+            except Exception as e:
+                print(f"終了処理（{label}）でエラーが出ました: {e}")
+        self.overlay = None
+        print("終了しました。")
 
 
 def parse_args():
@@ -1056,11 +1098,18 @@ def main():
         app.run()
     except (RuntimeError, FileNotFoundError) as e:
         print(f"起動できませんでした: {e}")
+        if log_file is not None:
+            # コンソール無し（vbs）で起動していると、ログに書くだけでは何も起きなかったように見える
+            show_message(f"ハンドマウスを起動できませんでした。\n\n{e}", warning=True)
         return 1
     except Exception:
         # コンソール無しのときも原因が残るようにトレースバックをログへ
         import traceback
         traceback.print_exc()
+        if log_file is not None:
+            show_message("予期しないエラーでハンドマウスを終了しました。\n\n"
+                         f"詳細はログを確認してください: {ROOT / 'logs' / 'hand_mouse.log'}",
+                         warning=True)
         return 1
     finally:
         instance.release()

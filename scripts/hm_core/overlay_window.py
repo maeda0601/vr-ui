@@ -334,7 +334,11 @@ class HandOverlay:
         self._frame_count = 0
 
         self.hand_win = LayeredWindow()
-        self.pill_win = LayeredWindow()
+        try:
+            self.pill_win = LayeredWindow()
+        except OSError:
+            self.hand_win.destroy()   # 1枚目だけ作れた状態で残さない
+            raise
         self.font = _font(15)
         self.font_small = _font(14)
         self._pill_key = None
