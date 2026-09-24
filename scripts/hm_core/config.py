@@ -2,6 +2,8 @@
 """動作設定。JSONファイルで上書きできる。"""
 
 import json
+import os
+import time
 from dataclasses import dataclass, asdict, fields
 from pathlib import Path
 
@@ -193,19 +195,45 @@ class Config:
 
     @classmethod
     def load(cls, path):
-        """JSON設定を読み込む。存在しなければ既定値で新規作成する。"""
+        """JSON設定を読み込む。存在しなければ既定値で新規作成する。
+
+        読めないときは既定値を返す（起動時用）。動作中の読み直しでは、
+        既定値に戻ってしまわないよう try_load() を使うこと。
+        """
         path = Path(path)
-        cfg = cls()
         if not path.exists():
+            cfg = cls()
             cfg.save(path)
             return cfg
-        try:
-            with path.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
-            print(f"設定ファイルを読み込めないため既定値を使います: {path} ({e})")
-            return cfg
+        cfg = cls.try_load(path)
+        if cfg is None:
+            print(f"設定ファイルを読み込めないため既定値を使います: {path}")
+            return cls()
+        return cfg
 
+    @classmethod
+    def try_load(cls, path):
+        """JSON設定を読み込む。ファイルが無い・壊れているときは None を返す。
+
+        手で編集していて書き損じたときや、設定画面が書き込んでいる途中を読んだときに、
+        動作中の設定が既定値へ戻らないようにするため。
+        """
+        return cls._from_data(_read_json(Path(path)))
+
+    @classmethod
+    def from_text(cls, text, source="設定ファイル"):
+        """JSON文字列から作る。壊れているときは None を返す。
+
+        動作中の読み直しでは、比較のために読んだ中身をそのまま渡す。ファイルを
+        読み直すと、設定画面が置き換えている一瞬に開けず、壊れていると誤判定するため。
+        """
+        return cls._from_data(_parse_json(text, source))
+
+    @classmethod
+    def _from_data(cls, data):
+        if data is None:
+            return None
+        cfg = cls()
         known = {f.name for f in fields(cls)}
         for key, value in data.items():
             if key in known:
@@ -215,11 +243,85 @@ class Config:
         return cfg
 
     def save(self, path):
-        """現在の設定をJSONに保存する。"""
+        """現在の設定をJSONに保存する。成功したら True。"""
+        return _write_json(Path(path), asdict(self))
+
+    @classmethod
+    def update_file(cls, path, **changes):
+        """設定ファイルの指定した項目だけを書き換える。成功したら True。
+
+        動作中のアプリが自分で保存するとき（Ctrl+Alt+S など）に使う。メモリ上の設定を
+        丸ごと保存すると、起動オプション（--enable など）で一時的に変えた値まで
+        ファイルに残ってしまうため、変えた項目だけをファイルの中身に反映する。
+        ファイルが壊れているときは、書き直して中身を失わないよう何もしない。
+        """
         path = Path(path)
+        if path.exists():
+            data = _read_json(path)
+            if data is None:
+                return False
+        else:
+            data = asdict(cls())
+        known = {f.name for f in fields(cls)}
+        for key, value in changes.items():
+            if key not in known:
+                raise KeyError(f"未知の設定項目です: {key}")
+            data[key] = value
+        return _write_json(path, data)
+
+
+def _read_json(path):
+    """JSONオブジェクトを読む。読めない・壊れている・オブジェクトでないときは None。"""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"設定ファイルを読み込めませんでした: {path} ({e})")
+        return None
+    return _parse_json(text, path)
+
+
+def _parse_json(text, source):
+    """JSON文字列を辞書にする。壊れている・オブジェクトでないときは None。"""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        print(f"設定ファイルの書式が正しくありません: {source} ({e})")
+        return None
+    if not isinstance(data, dict):
+        print(f"設定ファイルの形式が正しくありません（{{ }} で囲まれたJSONが必要です）: {source}")
+        return None
+    return data
+
+
+def _write_json(path, data):
+    """JSONを一時ファイルに書いてから置き換える（書き込み途中の中身を読まれないように）。
+
+    Windowsでは、他のプロセスが同じファイルを読んでいる一瞬だけ置き換えが拒否される
+    ことがあるので、少し待って数回やり直す。
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        print(f"設定ファイルを保存できませんでした: {path} ({e})")
+        return False
+
+    for attempt in range(5):
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("w", encoding="utf-8") as f:
-                json.dump(asdict(self), f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+            return True
+        except PermissionError as e:
+            if attempt == 4:
+                print(f"設定ファイルを保存できませんでした（使用中）: {path} ({e})")
+            else:
+                time.sleep(0.05)
         except OSError as e:
             print(f"設定ファイルを保存できませんでした: {path} ({e})")
+            break
+    try:
+        tmp.unlink()
+    except OSError:
+        pass
+    return False

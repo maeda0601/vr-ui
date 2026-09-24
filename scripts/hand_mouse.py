@@ -173,9 +173,10 @@ class HandMouseApp:
         if not self.config_path:
             return None
         try:
-            return Path(self.config_path).read_text(encoding="utf-8")
+            # UTF-8 以外で保存されていても例外で止めない（解析で壊れていると判定される）
+            return Path(self.config_path).read_text(encoding="utf-8", errors="replace")
         except OSError:
-            return None
+            return None     # 置き換えの瞬間などで開けなかった。次の確認で読み直す
 
     def note_config_saved(self):
         """自分で保存したときは、その内容を読み直さないよう控えておく。"""
@@ -191,7 +192,16 @@ class HandMouseApp:
             return
         self.config_text = text
 
-        changed, restart = self.apply_config(Config.load(self.config_path))
+        # 比較に使った中身をそのまま解析する（ファイルを読み直すと、設定画面が
+        # 置き換えている一瞬に開けず、壊れていると誤判定してこの変更を取りこぼす）
+        new_cfg = Config.from_text(text, self.config_path)
+        if new_cfg is None:
+            # 書き損じ・書き込み途中のファイルを既定値として反映すると、左右判定や感度が
+            # 勝手に戻ってしまう。今の設定のまま動かし、直して保存されたら読み直す
+            self.notify("設定ファイルを読み込めません。今の設定のまま動作します"
+                        "（書式を直して保存すると反映されます）", 5.0)
+            return
+        changed, restart = self.apply_config(new_cfg)
         # 再起動が要る項目は反映しないので差分が残り続ける。知らせるのは増えた分だけ
         fresh = [n for n in restart if n not in self.restart_pending]
         self.restart_pending = set(restart)
@@ -238,11 +248,16 @@ class HandMouseApp:
         self._single_allowed = True
         self._allow_streak = 0
         self._ignored_notice_shown = False
-        if self.config_path:
-            self.cfg.save(self.config_path)
+        value = "true" if self.cfg.swap_handedness else "false"
+        # この項目だけをファイルに書く。self.cfg を丸ごと保存すると、起動オプション
+        # （--enable / --display など）で一時的に変えた値までファイルに残ってしまう
+        if self.config_path and Config.update_file(
+                self.config_path, swap_handedness=self.cfg.swap_handedness):
             self.note_config_saved()      # 自分の保存で読み直しが走らないように
-        self.notify("左右判定を入れ替えました（swap_handedness="
-                    f"{'true' if self.cfg.swap_handedness else 'false'}、設定に保存）", 3.0)
+            self.notify(f"左右判定を入れ替えました（swap_handedness={value}、設定に保存）", 3.0)
+        else:
+            self.notify(f"左右判定を入れ替えました（swap_handedness={value}）。"
+                        "設定ファイルに保存できなかったため、今回の起動中のみ有効です", 5.0)
 
     def reset_state(self):
         self.recognizer.reset()

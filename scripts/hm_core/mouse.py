@@ -6,9 +6,14 @@ SendInput / SetCursorPos を使用する。
 """
 
 import ctypes
+import time
 from ctypes import wintypes
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
+
+# 送信失敗の警告を出す間隔[秒]（失敗が続く間、毎フレーム出さないため）
+_WARN_INTERVAL_SEC = 10.0
+_last_warn_at = -_WARN_INTERVAL_SEC
 
 # SendInput用の定数
 INPUT_MOUSE = 0
@@ -54,12 +59,25 @@ class INPUT(ctypes.Structure):
 
 
 def _send(*inputs):
-    """INPUT構造体をまとめて送信する。"""
+    """INPUT構造体をまとめて送信する。送れたら True。
+
+    ロック画面・UACの確認画面・管理者権限のウィンドウなどでは、OSが入力を拒否して
+    送信が失敗する。そこで例外を投げるとアプリごと終了してしまうので、警告を残して
+    このフレームの操作だけ諦める（次のフレームで改めて送る）。
+    """
+    global _last_warn_at
     n = len(inputs)
     array = (INPUT * n)(*inputs)
     sent = user32.SendInput(n, array, ctypes.sizeof(INPUT))
-    if sent != n:
-        raise ctypes.WinError(ctypes.get_last_error())
+    if sent == n:
+        return True
+    now = time.monotonic()
+    if now - _last_warn_at >= _WARN_INTERVAL_SEC:
+        _last_warn_at = now
+        err = ctypes.get_last_error()
+        print(f"マウス入力を送れませんでした（エラー {err}）。ロック画面・UACの確認画面・"
+              "管理者権限のウィンドウでは操作できません。")
+    return False
 
 
 def _mouse_input(flags, data=0):
@@ -115,13 +133,13 @@ class MouseController:
         return pt.x, pt.y
 
     def press_left(self):
-        if not self.left_down:
-            _send(_mouse_input(MOUSEEVENTF_LEFTDOWN))
+        # 送れなかったときは押していない扱いのまま（次のフレームで押し直す）
+        if not self.left_down and _send(_mouse_input(MOUSEEVENTF_LEFTDOWN)):
             self.left_down = True
 
     def release_left(self):
-        if self.left_down:
-            _send(_mouse_input(MOUSEEVENTF_LEFTUP))
+        # 送れなかったときは押したままの扱いで残し、次に呼ばれたときに離し直す
+        if self.left_down and _send(_mouse_input(MOUSEEVENTF_LEFTUP)):
             self.left_down = False
 
     def click_left(self):

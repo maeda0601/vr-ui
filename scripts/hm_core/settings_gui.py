@@ -55,6 +55,10 @@ class SettingsApp:
 
     def __init__(self, config_path):
         self.config_path = Path(config_path)
+        # 壊れたファイルを開いたときは既定値を表示することになる。黙って保存すると
+        # 既定値で上書きされてしまうので、開いた直後に知らせる
+        self.load_failed = (self.config_path.exists()
+                            and Config.try_load(self.config_path) is None)
         self.cfg = Config.load(self.config_path)
         self.defaults = Config()
         self.vars = {}        # name -> tk.Variable（編集中の値）
@@ -74,6 +78,15 @@ class SettingsApp:
         self._build()
         self._remember_saved()
         self._update_status()
+        if self.load_failed:
+            self._set_status(f"※ {self.config_path.name} の書式が壊れているため、既定値を表示しています。"
+                             "保存するとこの内容で上書きされます。")
+            self.root.after(200, lambda: messagebox.showwarning(
+                "設定ファイルを読み込めません",
+                f"{self.config_path} の書式が壊れているため読み込めませんでした。\n\n"
+                "画面には既定値を表示しています。このまま保存すると既定値で上書きされます。\n"
+                "元の値を残したい場合は、保存せずに閉じてファイルを直してください。",
+                parent=self.root))
 
     # --- 組み立て ---------------------------------------------------
     def _build(self):
@@ -385,7 +398,10 @@ class SettingsApp:
 
     def save(self):
         bad = self.collect()
-        self.cfg.save(self.config_path)
+        if not self.cfg.save(self.config_path):
+            self._set_status(f"保存できませんでした → {self.config_path.name}"
+                             "（ファイルが他のアプリで開かれていないか確認してください）")
+            return False
 
         restart = [self.items[n].label for n, v in self.vars.items()
                    if self.items[n].restart and self.saved.get(n) != v.get()]
@@ -418,8 +434,8 @@ class SettingsApp:
                 parent=self.root)
             if answer is None:
                 return
-            if answer:
-                self.save()
+            if answer and not self.save():
+                return      # 保存に失敗したら、変更を失わないよう閉じない
         self.root.destroy()
 
     # --- 表示 -------------------------------------------------------

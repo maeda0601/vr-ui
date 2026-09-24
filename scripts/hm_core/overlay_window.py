@@ -10,6 +10,7 @@
 
 import ctypes
 import math
+import time
 from ctypes import wintypes
 from pathlib import Path
 
@@ -337,6 +338,7 @@ class HandOverlay:
         self.font = _font(15)
         self.font_small = _font(14)
         self._pill_key = None
+        self._last_warn_at = None   # 描画失敗の警告を最後に出した時刻
 
     # --- 描画 -----------------------------------------------------------
     def render(self, hands_px, cursor_px, state, enabled, hint="", ghost_px=()):
@@ -349,11 +351,19 @@ class HandOverlay:
         """
         if self.closed:
             return
-        if hands_px or ghost_px:
-            self._render_hands(hands_px, cursor_px, state, enabled, ghost_px)
-        else:
-            self.hand_win.hide()
-        self._render_pill(state, enabled, hint)
+        try:
+            if hands_px or ghost_px:
+                self._render_hands(hands_px, cursor_px, state, enabled, ghost_px)
+            else:
+                self.hand_win.hide()
+            self._render_pill(state, enabled, hint)
+        except OSError as e:
+            # 画面のロック・切り替え中などでウィンドウ更新が失敗することがある。
+            # 表示は次のフレームで描き直せばよいので、アプリは止めない
+            now = time.monotonic()
+            if self._last_warn_at is None or now - self._last_warn_at >= 10.0:
+                self._last_warn_at = now
+                print(f"オーバーレイを描画できませんでした（{e}）。次のフレームで再試行します。")
 
         self._frame_count += 1
         if self._frame_count % 60 == 0:
