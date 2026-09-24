@@ -18,3 +18,17 @@ dependencies = [
 # スクリプト集なのでパッケージとしてはインストールしない（uv run scripts/... で実行する）
 [tool.uv]
 package = false
+
+[dependency-groups]
+# 開発用（uv sync で入る。本体の実行には不要）
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# 既定の fd レベルの出力キャプチャだと、設定画面（Tk）の起動がときどき失敗して
+# テストが skip になる（3回に1回程度）。Python レベルのキャプチャなら安定する
+addopts = "--capture=sys"
+# scripts/ のモジュール（hand_mouse, hm_core, download_model）をそのまま import する
+pythonpath = ["scripts"]

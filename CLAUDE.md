@@ -19,9 +19,13 @@ uv run scripts/hand_mouse.py --display preview   # カメラ映像＋HUDのウ�
 uv run scripts/hand_mouse.py --enable --camera 1 --display none   # 主なオプション
 uv run scripts/hand_mouse_settings.py           # 設定画面（Tkinter）。本体を起動していなくても使える
 uv run python -m compileall -q scripts          # 構文チェック
+uv run pytest                                   # 自動テスト（約100件、数秒）
+uv run pytest tests/test_gestures.py -k scroll  # 1ファイル・名前で絞って実行
 ```
 
-- 自動テストは無い。ジェスチャー判定は `hm_core.gestures.Hand` に `.x/.y` を持つダミーランドマーク21点を渡せば、カメラ無しで `GestureRecognizer.update()` を検証できる。
+- **テスト（`tests/`）はカメラ・MediaPipe の推論・実際のマウス操作・本物のホットキーを使わない。** `tests/synthetic.py` の `make_hand()` で合成の手（21点）を作り、`Player` で recognizer → `process()` に流す。`make_app()` はマウスを `FakeMouse`（呼ばれた操作を記録するだけ）に差し替えるので、テスト中にカーソルが動いたりクリックされたりしない。ホットキーは `conftest.py` の `fake_hotkeys`（`taken` に入れたキーが使用中扱い）で模擬する — 本物を登録すると動作中の本体と取り合う。設定ファイルは `config_file` フィクスチャ（一時フォルダ）を使い、`scripts/hand_mouse_config.json` には触らない。モデルの検証テストは手元の標準モデルがあるときだけ走る（無ければ skip）。
+- **テストは修正した不具合の再発防止を兼ねている**（入力送信失敗・壊れた設定・一時設定の永続化・`pinch_arm=0`・起動オプションの保持・設定画面の書き戻し・終了キー・モデル検証・型チェック・後始末）。それぞれの不具合を埋め戻すと該当テストが落ちることを確認済み。挙動を意図して変えたときはテストも合わせて直すこと。
+- pytest は `dev` 依存（`uv sync` で入る）。`pyproject.toml` の `pythonpath = ["scripts"]` で `hand_mouse` / `hm_core` / `download_model` をそのまま import する。`addopts = "--capture=sys"` は外さないこと: 既定の fd レベルのキャプチャでは設定画面（Tk）の起動が3回に1回ほど失敗し、`test_settings_gui.py` が黙って skip される。
 - 手を検出しないまま動作確認したいときは `enable_on_start=false`（既定）のまま起動すれば、マウスには一切触れない。
 - 設定は初回起動時に `scripts/hand_mouse_config.json` が自動生成される。`Config` dataclass にフィールドを追加すればJSONにも自動で載る（未知キーは無視される）。
 
