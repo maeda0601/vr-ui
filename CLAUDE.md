@@ -31,18 +31,25 @@ uv run pytest tests/test_gestures.py -k scroll  # 1ファイル・名前で絞�
 
 ## アーキテクチャ
 
-1フレームの流れ（`scripts/hand_mouse.py` の `HandMouseApp.run`）:
+1フレームの流れ（`scripts/hand_mouse.py`。`run()` → `loop()` が毎フレーム次を呼ぶ）:
 
 ```
 CameraStream(別スレッド, 最新フレームのみ保持)
   → cv2.flip で鏡像化  ※以降の正規化座標はすべて鏡像空間
-  → HandLandmarker.detect_for_video(VIDEO mode, 単調増加のtimestamp_ms 必須)
-  → Hand（特徴量: 指の伸展・ピンチ距離。手のサイズ dist(手首,中指付け根) で正規化しカメラ距離に依存させない）
-  → GestureRecognizer.update()  … 状態を持つ（ピンチのヒステリシス）。モードを1つ返す
-  → HandMouseApp.process()      … フレーム間状態（ドラッグ用オフセット、スクロール/ズーム累積、グー保持タイマー）
-  → MouseController（SetCursorPos / SendInput）
-  → 表示: display_mode により HandOverlay（透過オーバーレイ, 既定） / overlay.render_hud（カメラプレビュー） / なし
+  → detect_hands()   … HandLandmarker.detect_for_video(VIDEO mode, 単調増加のtimestamp_ms 必須) → Hand のリスト
+  → step()           … カメラにも画面にも触らない（合成した手を渡せばテストできる）
+       select_hands() / note_ignored_hands()  … 使う手の選別（無視した手の説明）
+       GestureRecognizer.update()  … 状態を持つ（ピンチのヒステリシス）。モードを1つ返す
+       process()                   … フレーム間状態（ドラッグ用オフセット、スクロール/ズーム累積、グー保持タイマー）
+                                     → MouseController（SetCursorPos / SendInput）
+       build_hint() / add_debug_text()  … 画面上部の案内文
+     → FrameResult(state, hint, ignored_hands)
+  → show()           … display_mode により HandOverlay（透過オーバーレイ, 既定） / render_hud（カメラプレビュー） / なし
 ```
+
+- `Hand` の特徴量（指の伸展・ピンチ距離）は手のサイズ dist(手首,中指付け根) で正規化し、カメラとの距離に依存させない。
+- `process()` は順番だけを持つ: `_update_common()`（グー・見失い・安定化・モードを抜けたときの片付け）→ `_update_lock_drag()`（中指固定→ドラッグ移行）→ モード別（`_move_cursor` / `_drag_from_lock` / `_left_click` / `_right_click` / `handle_scroll` / `handle_zoom` / `_hold_still`）。モードの処理を変えるときは該当メソッドだけを触る。
+- 案内文の優先順位は `build_hint()` の上から順（一時的な通知 → グー保持 → 無視している手 → カメラの端 → 操作中の状態 → 無効中の始め方）。案内を足すときは優先順位の位置を決めてから入れ、`tests/test_frame_step.py` にテストを足す。
 
 ### 透過オーバーレイ（`hm_core/overlay_window.py`）
 

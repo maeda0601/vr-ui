@@ -29,7 +29,7 @@ import math
 import os
 import sys
 import time
-from dataclasses import fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 import cv2
@@ -84,6 +84,14 @@ DISPLAY_MODES = ("overlay", "preview", "none")
 OFFSET_DECAY_TAU = 0.12
 # 設定ファイルの更新を確認する間隔[秒]（設定画面で保存したら読み直すため）
 CONFIG_POLL_SEC = 1.0
+
+
+@dataclass
+class FrameResult:
+    """1フレーム分の処理結果（step() の戻り値。描画に使う）。"""
+    state: G.GestureState
+    hint: str = ""                                     # 画面上部の案内文
+    ignored_hands: list = field(default_factory=list)  # 設定で使わない手（灰色で描く）
 
 
 def clamp01(v):
@@ -147,6 +155,8 @@ class HandMouseApp:
         self.last_click_at = None         # 直前の左クリック時刻（ダブルクリック表示用）
         self.status_text = ""
         self.status_until = 0.0
+        self._last_frame_time = None      # 前のフレームの時刻（dt の計算用）
+        self._last_timestamp_ms = -1      # 検出器に渡した前回のタイムスタンプ
 
     # --- 部品の初期化 -------------------------------------------------
     def open_camera(self):
@@ -619,10 +629,39 @@ class HandMouseApp:
         return 0.0 if self.no_hand_since is None else now - self.no_hand_since
 
     def process(self, state, now, dt):
-        """判定結果をマウス操作へ反映する。"""
+        """判定結果をマウス操作へ反映する。
+
+        1. どのモードでも行う更新（グー・手の見失い・安定化の強さ・モードを抜けたときの片付け）
+        2. 中指ピンチ固定 → ドラッグへの移行
+        3. モードごとの操作
+        """
         mode = state.mode
         entered = mode != self.prev_mode
 
+        self._update_common(state, now, dt, entered)
+        self._update_lock_drag(state, now)
+
+        if mode == G.MODE_POINT:
+            if self.lock_drag:
+                self._drag_from_lock(state, now, dt)
+            else:
+                self._move_cursor(state, now, dt)
+        elif mode == G.MODE_LEFT:
+            self._left_click(state, now, dt, entered)
+        elif mode == G.MODE_RIGHT:
+            self._right_click(state, now, dt, entered)
+        elif mode == G.MODE_SCROLL:
+            self.handle_scroll(state.scroll_anchor)
+        elif mode == G.MODE_ZOOM:
+            self.handle_zoom(state.zoom_distance)
+        else:
+            self._hold_still(mode, dt)
+
+        self.prev_mode = mode
+
+    def _update_common(self, state, now, dt, entered):
+        """モードに関係なく毎フレーム行う更新と、モードを抜けたときの片付け。"""
+        mode = state.mode
         self.handle_fist(mode, now)
         self.handle_idle(mode, now)
         self.update_palm_size(state, dt)
@@ -643,7 +682,9 @@ class HandMouseApp:
             self.prev_zoom_distance = None
             self.zoom_accum = 0.0
 
-        # 中指ピンチ固定の継続時間。一定時間続いたらドラッグ（左ボタン押下）に移行する
+    def _update_lock_drag(self, state, now):
+        """中指ピンチ固定の継続時間を数え、lock_drag_sec 続いたらドラッグ（左ボタン押下）に移る。"""
+        mode = state.mode
         locked = mode == G.MODE_POINT and state.lock_tip is not None
         if locked:
             if self.lock_since is None:
@@ -661,82 +702,146 @@ class HandMouseApp:
                 self.mouse.release_left()
         state.lock_drag = self.lock_drag
 
-        if mode == G.MODE_POINT and self.lock_drag:
-            # 固定からのドラッグ: 固定を解いて追従させ、左ボタンは押したまま
+    def _drag_from_lock(self, state, now, dt):
+        """固定からのドラッグ: 固定を解いて追従させ、左ボタンは押したまま。"""
+        if self.frozen:
+            self.reanchor(state.cursor)
+            self.frozen = False
+        self.apply_cursor(state.cursor, now, dt)
+        if self.enabled:
+            self.mouse.press_left()
+
+    def _move_cursor(self, state, now, dt):
+        """カーソル移動。親指が近づいてきた（クリック準備）ときはその場に止める。"""
+        self.decay_offset(dt)
+        if not state.arming or state.lock_tip is not None:
+            # 明示的な固定（中指ピンチ）は、余韻中の自動解除で立った抑止フラグを無視する
+            self.arm_suppressed = False
+        want_freeze = (state.arming and not self.arm_suppressed
+                       and self.last_screen_pos is not None)
+        if want_freeze and self.frozen and state.lock_tip is None:
+            # 固定中に手が大きく動いた／時間切れなら、クリックではないとみなして解除
+            # （中指ピンチによる明示的な固定では解除しない。離せば解除される）
+            raw = self.map_to_screen(*state.cursor)
+            moved = math.hypot(raw[0] - self.freeze_raw[0], raw[1] - self.freeze_raw[1])
+            if moved > self.cfg.arm_cancel_px or now - self.freeze_since > self.cfg.arm_timeout_sec:
+                want_freeze = False
+                self.arm_suppressed = True
+        if want_freeze:
+            if not self.frozen:
+                # 親指が近づいてきた瞬間にカーソルを固定し、ピンチ動作によるズレを防ぐ
+                self.frozen = True
+                self.freeze_since = now
+                self.freeze_raw = self.map_to_screen(*state.cursor)
+        else:
             if self.frozen:
                 self.reanchor(state.cursor)
                 self.frozen = False
             self.apply_cursor(state.cursor, now, dt)
+
+    def _left_click(self, state, now, dt, entered):
+        """左クリック。left_drag_enabled ならつまんでいる間は押しっぱなし（ドラッグ）。"""
+        if entered:
+            # 固定位置／指先から「指の中点」へ基準点が変わるので、飛ばないように継ぎ直す
+            self.reanchor(state.cursor)
+        if self.cfg.left_drag_enabled:
+            self.frozen = False
+            self.apply_cursor(state.cursor, now, dt)
             if self.enabled:
-                self.mouse.press_left()
-
-        elif mode == G.MODE_POINT:
-            self.decay_offset(dt)
-            if not state.arming or state.lock_tip is not None:
-                # 明示的な固定（中指ピンチ）は、余韻中の自動解除で立った抑止フラグを無視する
-                self.arm_suppressed = False
-            want_freeze = (state.arming and not self.arm_suppressed
-                           and self.last_screen_pos is not None)
-            if want_freeze and self.frozen and state.lock_tip is None:
-                # 固定中に手が大きく動いた／時間切れなら、クリックではないとみなして解除
-                # （中指ピンチによる明示的な固定では解除しない。離せば解除される）
-                raw = self.map_to_screen(*state.cursor)
-                moved = math.hypot(raw[0] - self.freeze_raw[0], raw[1] - self.freeze_raw[1])
-                if moved > self.cfg.arm_cancel_px or now - self.freeze_since > self.cfg.arm_timeout_sec:
-                    want_freeze = False
-                    self.arm_suppressed = True
-            if want_freeze:
-                if not self.frozen:
-                    # 親指が近づいてきた瞬間にカーソルを固定し、ピンチ動作によるズレを防ぐ
-                    self.frozen = True
-                    self.freeze_since = now
-                    self.freeze_raw = self.map_to_screen(*state.cursor)
-            else:
-                if self.frozen:
-                    self.reanchor(state.cursor)
-                    self.frozen = False
-                self.apply_cursor(state.cursor, now, dt)
-
-        elif mode == G.MODE_LEFT:
-            if entered:
-                # 固定位置／指先から「指の中点」へ基準点が変わるので、飛ばないように継ぎ直す
-                self.reanchor(state.cursor)
-            if self.cfg.left_drag_enabled:
-                self.frozen = False
-                self.apply_cursor(state.cursor, now, dt)
-                if self.enabled:
-                    self.mouse.press_left()       # つまんでいる間は押しっぱなし（ドラッグ）
-            else:
-                # 押して離すだけ。固定中はその位置のまま動かさない
-                if not self.frozen:
-                    self.apply_cursor(state.cursor, now, dt)
-                if entered and self.enabled:
-                    self.emit_left_click(now)
-
-        elif mode == G.MODE_RIGHT:
-            if entered:
-                self.reanchor(state.cursor)
-            # 固定中はその位置のまま動かさない
+                self.mouse.press_left()       # つまんでいる間は押しっぱなし（ドラッグ）
+        else:
+            # 押して離すだけ。固定中はその位置のまま動かさない
             if not self.frozen:
-                self.decay_offset(dt)
                 self.apply_cursor(state.cursor, now, dt)
             if entered and self.enabled:
-                self.mouse.click_right()
+                self.emit_left_click(now)
 
-        elif mode == G.MODE_SCROLL:
-            self.handle_scroll(state.scroll_anchor)
-
-        elif mode == G.MODE_ZOOM:
-            self.handle_zoom(state.zoom_distance)
-
-        else:
-            # 手が無い／グー／待機のときはカーソルを動かさない
-            self.frozen = False
+    def _right_click(self, state, now, dt, entered):
+        """右クリック（つまんだ瞬間に1回）。固定中はその位置のまま動かさない。"""
+        if entered:
+            self.reanchor(state.cursor)
+        if not self.frozen:
             self.decay_offset(dt)
-            if mode == G.MODE_IDLE:
-                self.filter.reset()
+            self.apply_cursor(state.cursor, now, dt)
+        if entered and self.enabled:
+            self.mouse.click_right()
 
-        self.prev_mode = mode
+    def _hold_still(self, mode, dt):
+        """手が無い／グー／待機のときはカーソルを動かさない。"""
+        self.frozen = False
+        self.decay_offset(dt)
+        if mode == G.MODE_IDLE:
+            self.filter.reset()
+
+    # --- 画面上部の案内文 ---------------------------------------------
+    def build_hint(self, state, now, ignored_label=""):
+        """画面上部に出す案内文を1つ選ぶ（プレビュー・オーバーレイ共通）。
+
+        上から順に優先度が高い。一時的な通知 → グー保持の残り時間 → 無視している手 →
+        カメラの端の警告 → 操作中の状態 → 無効中の始め方。
+        ignored_label: 手を無視しているときの説明（無視していなければ空）。
+        """
+        status = self.status_text if now < self.status_until else ""
+        if status:
+            return status
+        if self.fist_since is not None and not self.fist_consumed:
+            # 保持時間が長いので、あと何秒かを見せる
+            held = now - self.fist_since
+            return f"グー保持中 {held:.1f} / {self.cfg.fist_toggle_sec:.1f} 秒"
+        if ignored_label:
+            hint = (f"{'右' if self.cfg.use_hand == 'right' else '左'}手だけを使います"
+                    f"（{ignored_label}）")
+            if self.key("swap"):
+                hint += f" {self.key('swap')} で左右入れ替え"
+            return hint
+        if state.fingers_out:
+            return "指先がカメラの外です（手を下げるか、画面を手前に倒してカメラを下向きに）"
+        if state.near_edge:
+            return "手がカメラの端に近いです"
+        if self.enabled and state.mode == G.MODE_IDLE and self.cfg.idle_disable_sec > 0:
+            return (f"手が見えません {self.idle_seconds(now):.1f} / "
+                    f"{self.cfg.idle_disable_sec:.1f} 秒で無効")
+        if self.enabled and state.lock_drag:
+            return "ドラッグ中（指を離すと終了）"
+        if self.enabled and state.lock_tip is not None and self.cfg.lock_drag_sec > 0:
+            return f"固定中 {state.lock_held_sec:.1f} / {self.cfg.lock_drag_sec:.1f} 秒でドラッグ"
+        if self.enabled and state.lock_tip is not None and self.cfg.lock_hold_sec > 0:
+            remain = max(0.0, self.cfg.lock_hold_sec - state.lock_held_sec)
+            return f"位置固定中 あと {remain:.1f} 秒"
+        if self.enabled:
+            return ""
+        if not state.hands:
+            # 閉じた手は検出されにくいので、まず開いた手を見せてもらう
+            return "手を開いてカメラに見せてください"
+        hint = f"グーを{self.cfg.fist_toggle_sec:g}秒保持"
+        if self.key("toggle"):
+            hint += f" または {self.key('toggle')}"
+        return hint + " で開始"
+
+    def debug_text(self, state):
+        """判定値の表示（しきい値調整用。--debug のときだけ）。手が無ければ空。"""
+        if not self.cfg.debug_hud or not state.hands:
+            return ""
+        h0 = state.hands[0]
+        dbg = (f"人差し指 {h0.pinch_index:.2f} / 中指 {h0.pinch_to(G.MIDDLE_TIP):.2f}"
+               f"（伸び {h0.reach_ratio(G.MIDDLE_TIP, G.MIDDLE_PIP):.2f}）"
+               f" / 薬指 {h0.pinch_to(G.RING_TIP):.2f}"
+               f"（伸び {h0.reach_ratio(G.RING_TIP, G.RING_PIP):.2f}）")
+        if state.lock_tip is not None:
+            dbg += " / 固定: 中"
+        elif state.lock_block:
+            dbg += f" / 固定NG: {state.lock_block}"
+        return dbg
+
+    def add_debug_text(self, hint, state, now):
+        """案内文に判定値を足し、1秒に1回コンソールにも出す。"""
+        dbg = self.debug_text(state)
+        if not dbg:
+            return hint
+        if now - self._debug_printed > 1.0:
+            self._debug_printed = now
+            print(f"[判定値] {dbg}  mode={state.mode} lock={state.lock_tip is not None}")
+        return f"{hint}  {dbg}" if hint else dbg
 
     # --- 入力処理 -----------------------------------------------------
     def handle_keys(self):
@@ -808,6 +913,7 @@ class HandMouseApp:
 
     # --- メインループ -------------------------------------------------
     def run(self):
+        """起動してメインループを回し、終わったら後始末する。"""
         display = self.cfg.display_mode if self.cfg.display_mode in DISPLAY_MODES else "overlay"
         use_preview = display == "preview"
         # カメラより先にホットキーを確かめる（中止するときにカメラを開いたままにしない）
@@ -820,174 +926,149 @@ class HandMouseApp:
         try:
             cap = self.open_camera()
             landmarker = self.create_landmarker()
-            if use_preview:
-                cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
-                try:
-                    cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_TOPMOST, 1)
-                except cv2.error:
-                    pass
-            elif display == "overlay":
-                overlay = HandOverlay(self.mouse.screen_w, self.mouse.screen_h,
-                                      self.cfg.overlay_alpha)
+            overlay = self.open_display(display)
             self.overlay = overlay
-            self.note_config_saved()   # 起動時点の更新時刻を基準にする
-
-            print(f"画面解像度: {self.mouse.screen_w}x{self.mouse.screen_h} / 表示: {display}")
-            keys = [f"{self.key(n)}:{HOTKEY_PURPOSES[n]}" for n in ("toggle", "reset", "swap", "quit")
-                    if self.key(n)]
-            if keys:
-                print(" / ".join(keys) + "（どこからでも有効）")
-            if use_preview:
-                print("プレビュー表示中は Space / R / Esc も使えます。")
-            if not self.enabled:
-                how = f"グーを保持するか {self.key('toggle')}" if self.key("toggle") else "グーを保持"
-                print(f"※ 安全のため操作は無効状態で起動しました。{how} で開始します。")
-
-            last_time = time.monotonic()
-            last_timestamp_ms = -1
-            frame_id = 0
-            timeouts = 0
-
-            while self.running:
-                frame_id, frame = cap.read(frame_id)
-                if frame is None:
-                    timeouts += 1
-                    print(f"カメラのフレーム取得に失敗しました（{timeouts}回目）")
-                    if timeouts >= 5:
-                        print("カメラから読み取れないため終了します。")
-                        break
-                    self.handle_hotkeys()
-                    continue
-                timeouts = 0
-
-                # 鏡像にして、手の動きと画面の動きを一致させる
-                frame = cv2.flip(frame, 1)
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-
-                now = time.monotonic()
-                dt = max(now - last_time, 1e-3)
-                last_time = now
-                self.fps = self.fps * 0.9 + (1.0 / dt) * 0.1
-                self.reload_config_if_changed(now)
-
-                # 単調増加するタイムスタンプが必要
-                timestamp_ms = max(int(now * 1000), last_timestamp_ms + 1)
-                last_timestamp_ms = timestamp_ms
-
-                result = landmarker.detect_for_video(mp_image, timestamp_ms)
-                hands = []
-                for i, landmarks in enumerate(result.hand_landmarks):
-                    label, score = "", 1.0
-                    if i < len(result.handedness) and result.handedness[i]:
-                        label = result.handedness[i][0].category_name
-                        score = result.handedness[i][0].score
-                    hands.append(G.Hand(landmarks, label, score))
-
-                # 設定で使わない手（既定では左手）は操作にも描画にも使わない
-                active_hands = self.select_hands(hands)
-                ignored_only = bool(hands) and not active_hands
-                ignored_label = ""
-                if ignored_only:
-                    h = hands[0]
-                    side = {"left": "左手", "right": "右手"}.get(h.handedness.lower(), "不明")
-                    ignored_label = f"{side}と判定（信頼度 {h.handedness_score:.2f}）→ 無視中"
-                    if self._ignored_since_first == 0.0:
-                        self._ignored_since_first = now
-                    # 1.5秒以上無視し続けたら、コンソールにも対処法を一度だけ出す
-                    if (not self._ignored_notice_shown
-                            and now - self._ignored_since_first > 1.5):
-                        self._ignored_notice_shown = True
-                        print(f"検出した手を「{side}」と判定して無視しています（設定 use_hand={self.cfg.use_hand}）。"
-                              "これが実際の右手なら左右判定が逆です。"
-                              + (f"{self.key('swap')} で判定を入れ替えられます（設定に保存されます）。"
-                                 if self.key("swap") else
-                                 "設定画面の「左右の判定を入れ替える」をオンにしてください。"))
-                else:
-                    self._ignored_since_first = 0.0
-                ignored_hands = [h for h in hands if h not in active_hands]
-
-                state = self.recognizer.update(active_hands, now)
-                self.process(state, now, dt)
-
-                # 画面上部の案内文（プレビュー・オーバーレイ共通）
-                status = self.status_text if now < self.status_until else ""
-                if status:
-                    hint = status
-                elif self.fist_since is not None and not self.fist_consumed:
-                    # 保持時間が長いので、あと何秒かを見せる
-                    held = now - self.fist_since
-                    hint = f"グー保持中 {held:.1f} / {self.cfg.fist_toggle_sec:.1f} 秒"
-                elif ignored_only:
-                    hint = (f"{'右' if self.cfg.use_hand == 'right' else '左'}手だけを使います"
-                            f"（{ignored_label}）")
-                    if self.key("swap"):
-                        hint += f" {self.key('swap')} で左右入れ替え"
-                elif state.fingers_out:
-                    hint = "指先がカメラの外です（手を下げるか、画面を手前に倒してカメラを下向きに）"
-                elif state.near_edge:
-                    hint = "手がカメラの端に近いです"
-                elif (self.enabled and state.mode == G.MODE_IDLE
-                      and self.cfg.idle_disable_sec > 0):
-                    hint = (f"手が見えません {self.idle_seconds(now):.1f} / "
-                            f"{self.cfg.idle_disable_sec:.1f} 秒で無効")
-                elif self.enabled and state.lock_drag:
-                    hint = "ドラッグ中（指を離すと終了）"
-                elif (self.enabled and state.lock_tip is not None
-                      and self.cfg.lock_drag_sec > 0):
-                    hint = f"固定中 {state.lock_held_sec:.1f} / {self.cfg.lock_drag_sec:.1f} 秒でドラッグ"
-                elif (self.enabled and state.lock_tip is not None
-                      and self.cfg.lock_hold_sec > 0):
-                    remain = max(0.0, self.cfg.lock_hold_sec - state.lock_held_sec)
-                    hint = f"位置固定中 あと {remain:.1f} 秒"
-                elif self.enabled:
-                    hint = ""
-                elif not state.hands:
-                    # 閉じた手は検出されにくいので、まず開いた手を見せてもらう
-                    hint = "手を開いてカメラに見せてください"
-                else:
-                    hint = f"グーを{self.cfg.fist_toggle_sec:g}秒保持"
-                    if self.key("toggle"):
-                        hint += f" または {self.key('toggle')}"
-                    hint += " で開始"
-
-                # 判定値の表示（しきい値調整用）
-                if self.cfg.debug_hud and state.hands:
-                    h0 = state.hands[0]
-                    dbg = (f"人差し指 {h0.pinch_index:.2f} / 中指 {h0.pinch_to(G.MIDDLE_TIP):.2f}"
-                           f"（伸び {h0.reach_ratio(G.MIDDLE_TIP, G.MIDDLE_PIP):.2f}）"
-                           f" / 薬指 {h0.pinch_to(G.RING_TIP):.2f}"
-                           f"（伸び {h0.reach_ratio(G.RING_TIP, G.RING_PIP):.2f}）")
-                    if state.lock_tip is not None:
-                        dbg += " / 固定: 中"
-                    elif state.lock_block:
-                        dbg += f" / 固定NG: {state.lock_block}"
-                    hint = f"{hint}  {dbg}" if hint else dbg
-                    if now - self._debug_printed > 1.0:
-                        self._debug_printed = now
-                        print(f"[判定値] {dbg}  mode={state.mode} lock={state.lock_tip is not None}")
-
-                if use_preview:
-                    view = render_hud(frame, self.renderer, self.cfg, state,
-                                      self.enabled, self.fps, hint, ignored_hands,
-                                      area=self.current_area(), keys=self.hotkey_labels)
-                    cv2.imshow(WINDOW_NAME, view)
-                    if cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
-                        break
-                    self.handle_keys()
-                elif overlay is not None:
-                    overlay.render(self.hands_to_screen(state.hands, state),
-                                   self.last_screen_pos, state, self.enabled, hint,
-                                   ghost_px=self.hands_to_screen(ignored_hands, state, anchor_cursor=False))
-                    overlay.update()
-                    if overlay.closed:
-                        break
-
-                self.handle_hotkeys()
+            self.note_config_saved()   # 起動時点の設定ファイルの中身を基準にする
+            self.print_startup_info(display)
+            self.loop(cap, landmarker, overlay, use_preview)
         except KeyboardInterrupt:
             print("中断しました。")
         finally:
             self.shutdown(cap, landmarker, overlay)
+
+    def open_display(self, display):
+        """表示を用意する。オーバーレイのときはそれを返す（それ以外は None）。"""
+        if display == "preview":
+            cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_AUTOSIZE)
+            try:
+                cv2.setWindowProperty(WINDOW_NAME, cv2.WND_PROP_TOPMOST, 1)
+            except cv2.error:
+                pass
+            return None
+        if display == "overlay":
+            return HandOverlay(self.mouse.screen_w, self.mouse.screen_h, self.cfg.overlay_alpha)
+        return None
+
+    def print_startup_info(self, display):
+        print(f"画面解像度: {self.mouse.screen_w}x{self.mouse.screen_h} / 表示: {display}")
+        keys = [f"{self.key(n)}:{HOTKEY_PURPOSES[n]}" for n in ("toggle", "reset", "swap", "quit")
+                if self.key(n)]
+        if keys:
+            print(" / ".join(keys) + "（どこからでも有効）")
+        if display == "preview":
+            print("プレビュー表示中は Space / R / Esc も使えます。")
+        if not self.enabled:
+            how = f"グーを保持するか {self.key('toggle')}" if self.key("toggle") else "グーを保持"
+            print(f"※ 安全のため操作は無効状態で起動しました。{how} で開始します。")
+
+    def loop(self, cap, landmarker, overlay, use_preview):
+        """カメラのフレームごとに 検出 → 判定・操作（step）→ 描画 を繰り返す。"""
+        self._last_frame_time = time.monotonic()
+        frame_id = 0
+        timeouts = 0
+        while self.running:
+            frame_id, frame = cap.read(frame_id)
+            if frame is None:
+                timeouts += 1
+                print(f"カメラのフレーム取得に失敗しました（{timeouts}回目）")
+                if timeouts >= 5:
+                    print("カメラから読み取れないため終了します。")
+                    break
+                self.handle_hotkeys()
+                continue
+            timeouts = 0
+
+            # 鏡像にして、手の動きと画面の動きを一致させる
+            frame = cv2.flip(frame, 1)
+            now = time.monotonic()
+            dt = self.advance_clock(now)
+            self.reload_config_if_changed(now)
+
+            hands = self.detect_hands(landmarker, frame, now)
+            result = self.step(hands, now, dt)
+            if not self.show(frame, result, use_preview, overlay):
+                break
+            self.handle_hotkeys()
+
+    def advance_clock(self, now):
+        """前のフレームからの経過時間 dt を返し、FPS の表示値を更新する。"""
+        last = self._last_frame_time if self._last_frame_time is not None else now
+        dt = max(now - last, 1e-3)
+        self._last_frame_time = now
+        self.fps = self.fps * 0.9 + (1.0 / dt) * 0.1
+        return dt
+
+    def detect_hands(self, landmarker, frame, now):
+        """鏡像にしたフレームから手を検出して Hand のリストにする。"""
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        # VIDEO モードでは、タイムスタンプが前のフレームより必ず大きくないといけない
+        timestamp_ms = max(int(now * 1000), self._last_timestamp_ms + 1)
+        self._last_timestamp_ms = timestamp_ms
+        result = landmarker.detect_for_video(mp_image, timestamp_ms)
+        hands = []
+        for i, landmarks in enumerate(result.hand_landmarks):
+            label, score = "", 1.0
+            if i < len(result.handedness) and result.handedness[i]:
+                label = result.handedness[i][0].category_name
+                score = result.handedness[i][0].score
+            hands.append(G.Hand(landmarks, label, score))
+        return hands
+
+    def step(self, hands, now, dt):
+        """1フレーム分: 使う手を選び、ジェスチャーを判定してマウスを操作し、案内文を決める。
+
+        カメラにも画面にも触らないので、合成した手を渡せばテストできる。
+        """
+        active_hands = self.select_hands(hands)
+        ignored_label = self.note_ignored_hands(hands, active_hands, now)
+        ignored_hands = [h for h in hands if h not in active_hands]
+        state = self.recognizer.update(active_hands, now)
+        self.process(state, now, dt)
+        hint = self.add_debug_text(self.build_hint(state, now, ignored_label), state, now)
+        return FrameResult(state, hint, ignored_hands)
+
+    def note_ignored_hands(self, hands, active_hands, now):
+        """設定で使わない手だけが映っているとき、その説明を返す（案内文用。無ければ空）。
+
+        1.5秒以上続いたら、左右判定が逆の可能性と対処法をコンソールにも一度だけ出す。
+        """
+        if not hands or active_hands:
+            self._ignored_since_first = 0.0
+            return ""
+        h = hands[0]
+        side = {"left": "左手", "right": "右手"}.get(h.handedness.lower(), "不明")
+        if self._ignored_since_first == 0.0:
+            self._ignored_since_first = now
+        if not self._ignored_notice_shown and now - self._ignored_since_first > 1.5:
+            self._ignored_notice_shown = True
+            print(f"検出した手を「{side}」と判定して無視しています（設定 use_hand={self.cfg.use_hand}）。"
+                  "これが実際の右手なら左右判定が逆です。"
+                  + (f"{self.key('swap')} で判定を入れ替えられます（設定に保存されます）。"
+                     if self.key("swap") else
+                     "設定画面の「左右の判定を入れ替える」をオンにしてください。"))
+        return f"{side}と判定（信頼度 {h.handedness_score:.2f}）→ 無視中"
+
+    def show(self, frame, result, use_preview, overlay):
+        """1フレーム分を描く。ウィンドウが閉じられたら False（ループを終える）。"""
+        state = result.state
+        if use_preview:
+            view = render_hud(frame, self.renderer, self.cfg, state,
+                              self.enabled, self.fps, result.hint, result.ignored_hands,
+                              area=self.current_area(), keys=self.hotkey_labels)
+            cv2.imshow(WINDOW_NAME, view)
+            if cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
+                return False
+            self.handle_keys()
+        elif overlay is not None:
+            overlay.render(self.hands_to_screen(state.hands, state),
+                           self.last_screen_pos, state, self.enabled, result.hint,
+                           ghost_px=self.hands_to_screen(result.ignored_hands, state,
+                                                         anchor_cursor=False))
+            overlay.update()
+            if overlay.closed:
+                return False
+        return True
 
     def shutdown(self, cap, landmarker, overlay):
         """後始末。作れたものだけを片付け、1つが失敗しても残りは必ず行う。
