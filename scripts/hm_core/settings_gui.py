@@ -60,6 +60,8 @@ class SettingsApp:
         self.load_failed = (self.config_path.exists()
                             and Config.try_load(self.config_path) is None)
         self.cfg = Config.load(self.config_path)
+        self.file_text = self._read_file_text()   # 最後に見たファイルの中身（外からの変更の検出用）
+        self._loading = False                     # ファイルから値を入れている最中（未保存扱いにしない）
         self.defaults = Config()
         self.vars = {}        # name -> tk.Variable（編集中の値）
         self.texts = {}       # name -> tk.StringVar（数値入力欄の表示）
@@ -311,12 +313,89 @@ class SettingsApp:
             label.configure(text=text, foreground=color)
 
     def _mark_dirty(self):
+        if self._loading:
+            return
         if not self.dirty:
             self.dirty = True
             self._update_status()
 
     def _remember_saved(self):
         self.saved = {name: var.get() for name, var in self.vars.items()}
+
+    def _edited_names(self):
+        """最後に読み込んだ／保存したときから、画面で変えた項目の名前。"""
+        names = []
+        for name, var in self.vars.items():
+            try:
+                if var.get() != self.saved.get(name):
+                    names.append(name)
+            except tk.TclError:
+                names.append(name)      # 入力途中で読めない値も「変えた」扱い
+        return names
+
+    @staticmethod
+    def _to_var_value(item, value):
+        """設定値を、その項目の変数に入れる形にそろえる。"""
+        if item.kind == "bool":
+            return bool(value)
+        if item.kind == "int":
+            return int(round(float(value)))
+        if item.kind == "float":
+            return float(value)
+        return str(value)
+
+    # --- 外からの変更（本体の Ctrl+Alt+S など）-------------------------
+    def _read_file_text(self):
+        try:
+            return self.config_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return None
+
+    def _refresh_from_file(self, announce=True):
+        """設定ファイルが外で書き換わっていたら、画面でまだ触っていない項目に反映する。
+
+        本体の Ctrl+Alt+S（左右判定の入れ替え）などで変わった値を、開いたままの画面が
+        古い値で持ち続けないようにする。画面で変えた項目は、その変更を優先して触らない。
+        """
+        text = self._read_file_text()
+        if text is None or text == self.file_text:
+            return []
+        new = Config.from_text(text, self.config_path)
+        if new is None:
+            return []   # 書き損じなどで壊れている。直して保存されたら読む
+        self.file_text = text
+        self.load_failed = False
+        updated = []
+        self._loading = True
+        try:
+            for name, var in self.vars.items():
+                item = self.items[name]
+                try:
+                    current = var.get()
+                except tk.TclError:
+                    continue
+                if current != self.saved.get(name):
+                    continue    # 画面で編集中の項目はそのまま
+                try:
+                    value = self._to_var_value(item, getattr(new, name))
+                except (TypeError, ValueError):
+                    continue
+                if value == current:
+                    continue
+                var.set(value)
+                self.saved[name] = var.get()
+                setattr(self.cfg, name, getattr(new, name))
+                self._sync_text(item)
+                updated.append(item.label)
+        finally:
+            self._loading = False
+        self.dirty = bool(self._edited_names())
+        if updated:
+            self._update_effect()
+            if announce:
+                self._set_status("アプリ側で変更された項目を読み込みました: " + "、".join(updated))
+        self._update_status()
+        return updated
 
     # --- ボタン -----------------------------------------------------
     def _build_buttons(self):
@@ -397,19 +476,40 @@ class SettingsApp:
         return bad
 
     def save(self):
+        """画面で変えた項目だけを設定ファイルに書く。
+
+        全項目を書き戻すと、画面を開いている間にアプリ側で変わった値（Ctrl+Alt+S の
+        左右判定など）を、開いた時点の古い値で上書きしてしまうため。
+        """
         bad = self.collect()
-        if not self.cfg.save(self.config_path):
+        edited = [n for n in self._edited_names() if self.items[n].label not in bad]
+        if not edited and not self.load_failed:
+            self._set_status("変更はありません（保存済みの内容のままです）")
+            self.dirty = False
+            self._update_status()
+            return True
+
+        if self.load_failed:
+            # 壊れたファイルは中身を読めないので、画面の内容で丸ごと置き換える（開いたときに警告済み）
+            ok = self.cfg.save(self.config_path)
+        else:
+            ok = Config.update_file(self.config_path,
+                                    **{n: getattr(self.cfg, n) for n in edited})
+        if not ok:
             self._set_status(f"保存できませんでした → {self.config_path.name}"
-                             "（ファイルが他のアプリで開かれていないか確認してください）")
+                             "（ファイルが他のアプリで開かれていないか、書式が壊れていないか"
+                             "確認してください）")
             return False
 
-        restart = [self.items[n].label for n, v in self.vars.items()
-                   if self.items[n].restart and self.saved.get(n) != v.get()]
+        restart = [self.items[n].label for n in edited if self.items[n].restart]
         self._remember_saved()
         self.dirty = False
+        self.load_failed = False
+        # 開いている間にアプリ側で変わった項目も、画面に取り込んでおく
+        external = self._refresh_from_file(announce=False)
 
         stamp = time.strftime("%H:%M:%S")
-        message = f"保存しました（{stamp}） → {self.config_path.name}"
+        message = f"保存しました（{stamp}、{len(edited)}項目） → {self.config_path.name}"
         if is_running():
             message += " / 動作中のアプリに反映されます"
         else:
@@ -418,6 +518,8 @@ class SettingsApp:
             message += "\n※ " + "、".join(restart) + " は、アプリを再起動すると反映されます"
         if bad:
             message += "\n※ 読み取れなかった項目は変更していません: " + "、".join(bad)
+        if external:
+            message += "\n※ アプリ側で変更された項目を読み込みました: " + "、".join(external)
         self._set_status(message)
         self._update_status()
         return True
@@ -449,12 +551,13 @@ class SettingsApp:
         self.state_label.configure(text=running + mark)
 
     def run(self):
-        # 動作中かどうかは変わりうるので定期的に見直す
+        # 動作中かどうか・設定ファイルが外で変わったかを定期的に見直す
         def tick():
+            self._refresh_from_file()
             self._update_status()
-            self.root.after(2000, tick)
+            self.root.after(1000, tick)
 
-        self.root.after(2000, tick)
+        self.root.after(1000, tick)
         self.root.mainloop()
 
 

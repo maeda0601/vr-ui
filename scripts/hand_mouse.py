@@ -113,6 +113,12 @@ class HandMouseApp:
         self.config_text = None           # 最後に読んだ設定ファイルの中身（変わったら読み直す）
         self.config_check_at = 0.0        # 次に更新を確認する時刻
         self.restart_pending = set()      # 再起動待ちの項目（毎回知らせないため覚えておく）
+        # 起動オプションで指定した項目 {名前: 値}。設定ファイルを読み直してもこちらを優先する
+        # （設定画面で別の項目を保存しただけで --hand などの指定が消えないように）
+        self.cli_overrides = {}
+        # 起動オプションで指定した項目の「設定ファイル側の値」（最後に見たもの）。
+        # ファイル側で変えられたときだけ「反映しません」と知らせるために覚えておく
+        self.override_file_values = {}
         self.overlay = None               # 透過オーバーレイ（設定の反映で触る）
         self._debug_printed = 0.0         # 判定値をコンソールに出した時刻
         self.last_click_at = None         # 直前の左クリック時刻（ダブルクリック表示用）
@@ -201,24 +207,42 @@ class HandMouseApp:
             self.notify("設定ファイルを読み込めません。今の設定のまま動作します"
                         "（書式を直して保存すると反映されます）", 5.0)
             return
-        changed, restart = self.apply_config(new_cfg)
+        changed, restart, overridden = self.apply_config(new_cfg)
         # 再起動が要る項目は反映しないので差分が残り続ける。知らせるのは増えた分だけ
         fresh = [n for n in restart if n not in self.restart_pending]
         self.restart_pending = set(restart)
-        if not changed and not fresh:
+        if not changed and not fresh and not overridden:
             return
         message = f"設定を読み直しました（{changed}項目）"
         if fresh:
             message += f" ※{'、'.join(fresh)} は再起動後に反映されます"
+        if overridden:
+            message += (f" ※{'、'.join(overridden)} は起動オプションで指定しているため"
+                        "反映しません")
         self.notify(message, 4.0)
 
     def apply_config(self, new_cfg):
-        """新しい設定を今の動作へ入れる。戻り値は (反映した数, 再起動が要る項目名)。
+        """新しい設定を今の動作へ入れる。
 
+        戻り値は (反映した数, 再起動が要る項目名,
+        起動オプションで指定しているためファイル側の変更を反映しなかった項目名)。
         self.cfg は recognizer など他のオブジェクトからも参照されているので、
         差し替えずに中身だけ書き換える。起動時にしか読まない項目（カメラ番号や
         表示方法）は、動作中に変えると辻褄が合わなくなるので入れない。
         """
+        # 起動オプションで指定した項目は、ファイルの値ではなく指定値を使い続ける。
+        # 知らせるのは、ファイル側でその項目が変えられたときだけ（別の項目を保存した
+        # だけなら黙っている）
+        overridden = []
+        for name, value in self.cli_overrides.items():
+            file_value = getattr(new_cfg, name)
+            if (name in self.override_file_values
+                    and file_value != self.override_file_values[name]
+                    and file_value != value):
+                overridden.append(name)
+            self.override_file_values[name] = file_value
+            setattr(new_cfg, name, value)
+
         changed = 0
         restart = []
         for f in fields(Config):
@@ -232,7 +256,7 @@ class HandMouseApp:
             setattr(self.cfg, f.name, new)
             changed += 1
         if not changed:
-            return 0, restart
+            return 0, restart, overridden
 
         # 起動時に値を写して持っているものは、ここで追随させる
         self.mouse.margin = int(self.cfg.screen_margin_px)
@@ -240,11 +264,14 @@ class HandMouseApp:
                                d_cutoff=self.cfg.filter_d_cutoff)
         if self.overlay is not None:
             self.overlay.alpha = max(0.1, min(1.0, float(self.cfg.overlay_alpha)))
-        return changed, restart
+        return changed, restart, overridden
 
     def toggle_swap_handedness(self):
         """左右判定を入れ替えて設定ファイルに保存する（Ctrl+Alt+S）。"""
         self.cfg.swap_handedness = not self.cfg.swap_handedness
+        # その場で切り替えた値を優先する（--swap-hands の指定はここで役目を終える）
+        self.cli_overrides.pop("swap_handedness", None)
+        self.override_file_values.pop("swap_handedness", None)
         self._single_allowed = True
         self._allow_streak = 0
         self._ignored_notice_shown = False
@@ -912,20 +939,26 @@ def main():
     log_file = setup_logging_if_no_console()
     args = parse_args()
     cfg = Config.load(args.config)
+    # 起動オプションによる一時的な指定。設定ファイルには書かず、動作中に設定ファイルが
+    # 読み直されてもこの値を使い続ける（HandMouseApp.apply_config）
+    overrides = {}
     if args.camera is not None:
-        cfg.camera_index = args.camera
+        overrides["camera_index"] = args.camera
     if args.enable:
-        cfg.enable_on_start = True
+        overrides["enable_on_start"] = True
     if args.display:
-        cfg.display_mode = args.display
+        overrides["display_mode"] = args.display
     if args.no_preview:
-        cfg.display_mode = "none"
+        overrides["display_mode"] = "none"
     if args.hand:
-        cfg.use_hand = args.hand
+        overrides["use_hand"] = args.hand
     if args.swap_hands:
-        cfg.swap_handedness = True
+        overrides["swap_handedness"] = True
     if args.debug:
-        cfg.debug_hud = True
+        overrides["debug_hud"] = True
+    file_values = {name: getattr(cfg, name) for name in overrides}
+    for name, value in overrides.items():
+        setattr(cfg, name, value)
 
     enable_dpi_awareness()
 
@@ -940,6 +973,8 @@ def main():
     try:
         app = HandMouseApp(cfg)
         app.config_path = args.config
+        app.cli_overrides = overrides
+        app.override_file_values = file_values
         app.run()
     except (RuntimeError, FileNotFoundError) as e:
         print(f"起動できませんでした: {e}")
