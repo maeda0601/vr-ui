@@ -209,3 +209,95 @@ def test_send_failure_does_not_stop_app_and_recovers(monkeypatch):
     flaky.fail = False                                # ロック解除で送れるようになる
     p.feed([p.states[-1].hands[0]], 2)
     assert app.mouse.left_down
+
+
+# --- 長押しでダブルクリック（ドラッグを使わない設定）------------------------------
+
+def hold_frames(player, sec):
+    return math.ceil(sec / player.dt)
+
+
+def test_long_press_turns_into_double_click():
+    """触れた瞬間に1回、長押しが成立したらダブルクリックになるようクリックを足す。"""
+    app = enabled_app(left_drag_enabled=False)          # 長押し 0.6秒 > OS のダブルクリック時間 0.5秒
+    p = Player(app)
+    p.feed([make_hand()], 3)
+    play(p, approach(hold=0))
+    assert app.mouse.calls == ["left_click"]            # 触れた瞬間のクリックは遅らせない
+    touching = approach()[-1]
+    p.feed([touching], hold_frames(p, 0.7))
+    assert app.mouse.calls == ["left_click"] * 3        # 足した2回が OS でダブルクリックになる
+    assert any("ダブルクリック（長押し）" in n for n in app.notes)
+    p.feed([touching], 30)                              # 押し続けても繰り返さない
+    assert app.mouse.calls.count("left_click") == 3
+
+
+def test_long_press_within_os_double_click_time_adds_one_click():
+    """長押しの秒数が OS のダブルクリック時間より短ければ、1回目と合わせて2回にする（3連続にしない）。"""
+    app = enabled_app(left_drag_enabled=False, long_press_double_click_sec=0.4)
+    p = Player(app)
+    p.feed([make_hand()], 3)
+    play(p, approach(hold=0))
+    p.feed([approach()[-1]], hold_frames(p, 0.5))
+    assert app.mouse.calls == ["left_click"] * 2
+
+
+def test_short_tap_is_single_click():
+    app = enabled_app(left_drag_enabled=False)
+    p = Player(app)
+    p.feed([make_hand()], 3)
+    play(p, approach(hold=3))                           # 0.1秒ほどで離す
+    p.feed([make_hand()], 10)
+    assert app.mouse.calls == ["left_click"]
+
+
+def test_long_press_is_drag_when_drag_enabled():
+    app = enabled_app(left_drag_enabled=True)
+    p = Player(app)
+    p.feed([make_hand()], 3)
+    play(p, approach(hold=0))
+    p.feed([approach()[-1]], hold_frames(p, 1.0))
+    assert app.mouse.left_down
+    assert "left_click" not in app.mouse.calls
+
+
+def test_long_press_double_click_can_be_turned_off():
+    app = enabled_app(left_drag_enabled=False, long_press_double_click_sec=0.0)
+    p = Player(app)
+    p.feed([make_hand()], 3)
+    play(p, approach(hold=0))
+    p.feed([approach()[-1]], hold_frames(p, 1.0))
+    assert app.mouse.calls == ["left_click"]
+
+
+def test_long_press_shows_countdown():
+    app = enabled_app(left_drag_enabled=False)
+    p = Player(app)
+    p.feed([make_hand()], 3)
+    play(p, approach(hold=0))
+    state = p.feed([approach()[-1]], hold_frames(p, 0.3))
+    assert app.build_hint(state, p.t).startswith("長押しでダブルクリック 0.")
+
+
+def test_long_press_while_locked_with_middle_finger():
+    """中指で固定してから人差し指を付けたまま長押し（今の使い方）でもダブルクリックになる。"""
+    app = enabled_app(left_drag_enabled=False, freeze_gesture="middle")
+    p = Player(app)
+    kw = dict(index_ext=True, middle_ext=True)
+    base = make_hand(**kw)
+    mx, my = base.point(G.MIDDLE_TIP)
+    sx, sy = base.point(G.THUMB_TIP)
+    p.feed([base], 3)
+    for k in range(8):                                   # 親指を中指先へ近づけて固定
+        f = k / 7
+        p.feed([make_hand(thumb_to=(sx + (mx - sx) * f, sy + (my - sy) * f), **kw)])
+    locked = make_hand(thumb_to=(mx, my), **kw)
+    state = p.feed([locked], 3)
+    assert state.lock_tip is not None and app.frozen
+    frozen_at = app.last_screen_pos
+    points = list(locked.points)
+    points[G.INDEX_TIP] = (mx - 0.003, my + 0.003)       # 人差し指の先を親指に付ける
+    touching = G.Hand.from_points(points, "Right")
+    p.feed([touching], hold_frames(p, 0.8))
+    assert app.mouse.calls == ["left_click"] * 3
+    assert app.last_screen_pos == frozen_at              # 固定した位置のまま

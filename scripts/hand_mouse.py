@@ -132,6 +132,8 @@ class HandMouseApp:
         self.palm_ema = None          # 映っている手のひら長の平滑値（操作エリアの自動調整用）
         self.lock_since = None        # 中指ピンチ固定の開始時刻（ドラッグ移行の判定用）
         self.lock_drag = False        # 固定を続けてドラッグ（左ボタン押下）に移行した
+        self.left_since = None        # 左クリック（つまみ）を始めた時刻（長押しダブルクリック用）
+        self.long_press_fired = False # この長押しでダブルクリックを送った（1回の長押しで1回だけ）
         self.skeleton_prev = []       # オーバーレイ骨格の平滑化用（手ごとの前フレーム座標）
         self.noise_gain = 1.0         # 状況に応じた安定化の倍率（端・手の大きさで増える）
         self._single_allowed = True   # 手が1つのときの採用状態（左右判定のちらつき対策）
@@ -744,6 +746,8 @@ class HandMouseApp:
         if entered:
             # 固定位置／指先から「指の中点」へ基準点が変わるので、飛ばないように継ぎ直す
             self.reanchor(state.cursor)
+            self.left_since = now
+            self.long_press_fired = False
         if self.cfg.left_drag_enabled:
             self.frozen = False
             self.apply_cursor(state.cursor, now, dt)
@@ -755,6 +759,31 @@ class HandMouseApp:
                 self.apply_cursor(state.cursor, now, dt)
             if entered and self.enabled:
                 self.emit_left_click(now)
+            self._long_press_double_click(state, now)
+
+    def _long_press_double_click(self, state, now):
+        """つまんだまま long_press_double_click_sec 続いたらダブルクリックにする。
+
+        触れた瞬間のクリックは既に送っている（クリックの反応を遅らせないため）。長押しが
+        成立したら、OS がダブルクリックとして受け取るようにクリックを足す:
+        1回目から OS のダブルクリック時間を過ぎていれば2回（その2回がダブルクリックになる）、
+        まだ時間内なら1回（1回目と合わせてダブルクリック）。多く送ると3連続クリック
+        （テキストでは段落選択）になってしまう。
+        """
+        limit = self.cfg.long_press_double_click_sec
+        if limit <= 0 or self.left_since is None:
+            return
+        state.left_held_sec = now - self.left_since
+        if self.long_press_fired or state.left_held_sec < limit:
+            return
+        self.long_press_fired = True
+        if not self.enabled:
+            return
+        clicks = 2 if state.left_held_sec > self.mouse.double_click_time_sec() else 1
+        for _ in range(clicks):
+            self.mouse.click_left()
+        self.last_click_at = None    # 次のタップを、このダブルクリックの続きと数えない
+        self.notify("ダブルクリック（長押し）", 1.0)
 
     def _right_click(self, state, now, dt, entered):
         """右クリック（つまんだ瞬間に1回）。固定中はその位置のまま動かさない。"""
@@ -801,6 +830,11 @@ class HandMouseApp:
         if self.enabled and state.mode == G.MODE_IDLE and self.cfg.idle_disable_sec > 0:
             return (f"手が見えません {self.idle_seconds(now):.1f} / "
                     f"{self.cfg.idle_disable_sec:.1f} 秒で無効")
+        limit = self.cfg.long_press_double_click_sec
+        if (self.enabled and state.mode == G.MODE_LEFT and not self.cfg.left_drag_enabled
+                and limit > 0 and not self.long_press_fired and state.left_held_sec >= 0.15):
+            # 短いタップでちらつかないよう、少し押し続けてから出す
+            return f"長押しでダブルクリック {state.left_held_sec:.1f} / {limit:.1f} 秒"
         if self.enabled and state.lock_drag:
             return "ドラッグ中（指を離すと終了）"
         if self.enabled and state.lock_tip is not None and self.cfg.lock_drag_sec > 0:

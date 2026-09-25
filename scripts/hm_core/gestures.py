@@ -207,6 +207,7 @@ class GestureState:
     lock_drag: bool = False       # 固定を続けてドラッグに移行した（本体側が描画用に立てる）
     lock_block: str = ""          # 固定が始まらない理由（--debug 表示用。空なら固定可）
     lock_held_sec: float = 0.0    # 固定の継続時間（本体側が描画用に入れる）
+    left_held_sec: float = 0.0    # 左クリックを続けている時間（長押しダブルクリック用。本体側が入れる）
     near_edge: bool = False       # 手のひらがカメラ映像の端に近い（検出が不安定になる）
     fingers_out: bool = False     # 指先がカメラ映像の外に出ている（ピンチ判定が効かない）
     edge_factor: float = 0.0      # 端への近さ（0=十分内側, 1=端に接触）。安定化の強さに使う
